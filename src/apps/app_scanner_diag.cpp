@@ -412,29 +412,38 @@ void AppScannerDiag::captureSnapshot(DisplaySnapshot& snapshot) {
     snapshot.currentMode = APP_DIAG_SCANNER;
     strcpy(snapshot.activePage, "diag_laser");
     
-    // 1. 实时挡光状态
+    // 1. 实时遮挡电平状态
+    // 从测宽仪驱动单例中获取过滤后的实时IO状态电平数组
     bool* ioStates = scanner->getIOStatusArray();
     uint8_t states = 0;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
         if (ioStates[i]) {
+            // 将每一个通道的 active 高电平状态按 bit 位顺序 pack 进单字节 states 中 (Bit 0-3)
             states |= (1 << i);
         }
     }
     snapshot.data.scanner.states = states;
     snapshot.data.scanner.sampleCount = scanner->getSampleCount();
     
-    // 2. 拷贝历史波形
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 25; j++) {
+    // 2. 拷贝历史采样波形点阵 (采用 Bit-packing 压缩机制大幅节省跨核/跨设备传输数据量)
+    // - 每一个通道的历史采样是一个最大 200 个 bool (bit) 的缓冲区。
+    // - 我们通过 8个位 (1 字节) 打包为一个 uint8_t 的形式将其存储在 SCAN_BUFFER_BYTES (25 字节) 数组中。
+    // - 这样做可以让 200 bits 历史波形只占用 25 字节，减少 87.5% 的跨总线传输开销。
+    for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
+        for (int j = 0; j < SCAN_BUFFER_BYTES; j++) {
             uint8_t byteVal = 0;
+            // 逐位 (8 bits) 提取和打包
             for (int bit = 0; bit < 8; bit++) {
+                // 计算当前 bit 对应的全局波形采样位置索引
                 int sampleIdx = j * 8 + bit;
+                // 边界防护：检查索引是否在有效采样点数内，且该采样点上是否有信号遮挡
                 if (sampleIdx < snapshot.data.scanner.sampleCount && scanner->getSample(i, sampleIdx)) {
+                    // 采用高位优先 (MSB First) 进行位打包
                     byteVal |= (1 << (7 - bit));
                 }
             }
+            // 将打包好的单字节存入快照结构体
             snapshot.data.scanner.history[i][j] = byteVal;
         }
     }
 }
-

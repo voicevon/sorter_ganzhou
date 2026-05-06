@@ -128,23 +128,25 @@ void Rs485TouchScreen::refresh(const DisplaySnapshot& snapshot) {
         JsonObject data = doc.createNestedObject("data");
         
         data["states"] = snapshot.data.scanner.states;
+        data["sample_count"] = snapshot.data.scanner.sampleCount;
         
         const char* keys[] = {"history_p1", "history_p2", "history_p3", "history_p4"};
         int samples = snapshot.data.scanner.sampleCount;
+        if (samples < 0) samples = 0;
         if (samples > 200) samples = 200;
         int numBytes = (samples + 7) / 8;
         
-        char* hexBuf = (char*)malloc(numBytes * 2 + 1); 
-        
-        for(int i=0; i<NUM_SCAN_POINTS; i++) {
-            memset(hexBuf, 0, numBytes * 2 + 1);
+        for(int i=0; i<TOTAL_SCAN_CHANNELS; i++) {
+            String hexStr = "";
+            hexStr.reserve(numBytes * 2 + 1);
             for(int j=0; j<numBytes; j++) {
                 uint8_t byteVal = snapshot.data.scanner.history[i][j];
-                sprintf(hexBuf + j*2, "%02X", byteVal);
+                char buf[3];
+                sprintf(buf, "%02X", byteVal);
+                hexStr += buf;
             }
-            data[keys[i]] = (const char*)hexBuf;
+            data[keys[i]] = hexStr;
         }
-        free(hexBuf);
         
         serializeJson(doc, jsonStr);
         hasData = true;

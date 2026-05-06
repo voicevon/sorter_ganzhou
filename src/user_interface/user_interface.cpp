@@ -78,6 +78,20 @@ void UserInterface::addInputSource(InputSource* source) {
 }
 
 void UserInterface::refreshAllDevices(const DisplaySnapshot& snapshot) {
+    static DisplaySnapshot lastSnapshot;
+    static bool isFirst = true;
+    static uint32_t lastRefreshMs = 0;
+    
+    bool forceRefresh = (millis() - lastRefreshMs >= 500);
+    
+    if (!isFirst && !forceRefresh && memcmp(&snapshot, &lastSnapshot, sizeof(DisplaySnapshot)) == 0) {
+        return; // No changes detected and within 500ms, swallow the refresh to save bandwidth
+    }
+    
+    isFirst = false;
+    lastRefreshMs = millis();
+    memcpy(&lastSnapshot, &snapshot, sizeof(DisplaySnapshot));
+
     for (int i = 0; i < displayDeviceCount; i++) {
         displayDevices[i]->refresh(snapshot);
     }

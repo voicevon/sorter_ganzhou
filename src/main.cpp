@@ -50,9 +50,12 @@ String systemName = "Feng's AS-L9";
 TaskHandle_t hControlTask = nullptr;
 TaskHandle_t hUITask = nullptr;
 
-// 任务函数声明
+// 任务与辅助函数声明
 void vControlTask(void* pvParameters);
 void vUITask(void* pvParameters);
+void handleReturnToMenu();
+void handleMenuMode(const UIIntent& intent);
+void updateActiveApp(uint32_t currentMs, bool btnPressed, int delta);
 
 // ── 初始化子函数 ────────────────────────────────────────────────────────
 
@@ -229,6 +232,55 @@ void vControlTask(void* pvParameters) {
     }
 }
 
+void handleMenuMode(const UIIntent& intent) {
+    bool needsRefresh = false;
+    
+    if (intent.action == UIAction::NAVIGATE_RELATIVE) {
+        menuSystem.handleInput(intent.value, false);
+        needsRefresh = true;
+    } else if (intent.action == UIAction::ACTIVATE) {
+        menuSystem.handleInput(0, true);
+        if (menuModeActive) needsRefresh = true;
+    } else if (intent.action == UIAction::BACK) {
+        handleReturnToMenu();
+        needsRefresh = true;
+    }
+    
+    if (needsRefresh) {
+        userInterface->renderMenu(menuSystem.getCurrentNode(), menuSystem.getCursorIndex(), menuSystem.getScrollOffset());
+    }
+}
+
+void updateActiveApp(uint32_t currentMs, bool btnPressed, int delta) {
+    handleAppTypeChange(); // 强制应用程序状态检查
+
+    // 处理工作模式逻辑 (主要由 Handler 更新显示)
+    if (activeApp) {
+        activeApp->update(currentMs, btnPressed);
+        
+        // 模式特定的附加补丁
+        if (currentAppType == APP_DIAG_OUTLET) {
+            if (delta != 0) {
+                appOutletDiag.handleEncoderInput(delta);
+            }
+        }
+    }
+
+    static uint32_t lastSnapshotMs = 0;
+    if (currentMs - lastSnapshotMs >= 100) {
+        lastSnapshotMs = currentMs;
+
+        // ── 渲染与刷新快照 (中央 Broker 广播机制) ──
+        DisplaySnapshot snapshot = {};
+        snapshot.currentMode = currentAppType;
+        
+        if (activeApp) {
+            activeApp->captureSnapshot(snapshot);
+        }
+        userInterface->refreshAllDevices(snapshot);
+    }
+}
+
 void vUITask(void* pvParameters) {
     Serial.println("[FreeRTOS] UITask (Core 0) started.");
 
@@ -240,7 +292,6 @@ void vUITask(void* pvParameters) {
         // 映射为旧逻辑兼容变量
         int delta = (intent.action == UIAction::NAVIGATE_RELATIVE) ? intent.value : 0;
         bool btnPressed = (intent.action == UIAction::ACTIVATE);
-        bool backPressed = (intent.action == UIAction::BACK);
         
         // --- 核心同步：处理导航路径意图 (如来自从机切页) ---
         if (intent.action == UIAction::NAVIGATE_PATH) {
@@ -250,51 +301,9 @@ void vUITask(void* pvParameters) {
         uint32_t currentMs = millis();
         
         if (menuModeActive) {
-            bool needsRefresh = false;
-            
-            if (intent.action == UIAction::NAVIGATE_RELATIVE) {
-                menuSystem.handleInput(intent.value, false);
-                needsRefresh = true;
-            } else if (intent.action == UIAction::ACTIVATE) {
-                menuSystem.handleInput(0, true);
-                if (menuModeActive) needsRefresh = true;
-            } else if (intent.action == UIAction::BACK) {
-                // 返回逻辑
-                handleReturnToMenu();
-                needsRefresh = true;
-            }
-            
-            if (needsRefresh) {
-                userInterface->renderMenu(menuSystem.getCurrentNode(), menuSystem.getCursorIndex(), menuSystem.getScrollOffset());
-            }
+            handleMenuMode(intent);
         } else {
-            handleAppTypeChange(); // 强制应用程序状态检查
-
-            // 处理工作模式逻辑 (主要由 Handler 更新显示)
-            if (activeApp) {
-                activeApp->update(currentMs, btnPressed);
-                
-                // 模式特定的附加补丁
-                if (currentAppType == APP_DIAG_OUTLET) {
-                    if (delta != 0) {
-                        appOutletDiag.handleEncoderInput(delta);
-                    }
-                }
-            }
-
-            static uint32_t lastSnapshotMs = 0;
-            if (currentMs - lastSnapshotMs >= 100) {
-                lastSnapshotMs = currentMs;
-
-                // ── 渲染与刷新快照 (中央 Broker 广播机制) ──
-                DisplaySnapshot snapshot;
-                snapshot.currentMode = currentAppType;
-                
-                if (activeApp) {
-                    activeApp->captureSnapshot(snapshot);
-                }
-                userInterface->refreshAllDevices(snapshot);
-            }
+            updateActiveApp(currentMs, btnPressed, delta);
         }
         
         // 给系统任务（如 Watchdog/WiFi）留出时间，并维持约 30Hz 刷新

@@ -3,6 +3,13 @@
 
 #include <Arduino.h>
 #include "../../main.h"
+#ifndef TOTAL_SCAN_CHANNELS
+#define TOTAL_SCAN_CHANNELS 4
+#endif
+
+#ifndef SCAN_BUFFER_BYTES
+#define SCAN_BUFFER_BYTES 25
+#endif
 
 /**
  * @struct DashboardSnapshot
@@ -40,7 +47,7 @@ struct EncoderDiagSnapshot {
 struct ScannerDiagSnapshot {
     uint8_t states;           // 4路激光实时挡光状态 (Bit 0-3)
     int sampleCount;          // 编码器当前周期内的采样点数
-    uint8_t history[4][25];   // 4路激光历史200次采样数据位图 (4 * 25字节 = 800 bits)
+    uint8_t history[TOTAL_SCAN_CHANNELS][SCAN_BUFFER_BYTES];   // 4路激光历史200次采样数据位图 (4 * 25字节 = 800 bits)
 };
 
 /**
