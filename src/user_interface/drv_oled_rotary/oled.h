@@ -8,7 +8,7 @@
 #include "../../config.h"
 #include "../../main.h"
 #include "../common/display.h"
-#include "menu_system.h"
+#include "../common/menu_system.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64

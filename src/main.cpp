@@ -7,7 +7,7 @@
 #include "user_interface/user_interface.h"
 #include "user_interface/drv_oled_rotary/oled.h"
 #include "user_interface/drv_terminal/terminal.h"
-#include "user_interface/drv_oled_rotary/menu_system.h"
+#include "user_interface/common/menu_system.h"
 #include "user_interface/drv_rs485_screen/rs485_touch_screen.h"
 #include "user_interface/drv_mcgs/mcgs_display.h"
 #include "modular/encoder.h"
