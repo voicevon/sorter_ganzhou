@@ -108,9 +108,7 @@ int DiameterScanner::getDiameterAndStop() {
         }
     }
     
-    // [DIAGNOSTIC LOG] 输出原始计数值和缓冲区大小
-    Serial.printf("[SCANNER_DEBUG] Raw Counts: CH0:%d, CH1:%d, CH2:%d, CH3:%d | LastPhase:%d, Samples:%d\n", 
-                  highLevelPulseCounts[0], highLevelPulseCounts[1], highLevelPulseCounts[2], highLevelPulseCounts[3], previousSampledPhase, sampleCount.load());
+    // 诊断数据已通过 HMI snapshot 机制推送，此处不再在实时路径中打印
     
     //在此处执行计算逻辑
     float correctedCounts[2];
