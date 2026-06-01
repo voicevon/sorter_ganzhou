@@ -27,8 +27,8 @@ void ModbusMaster::begin() {
         pinMode(_enPin, OUTPUT);
         digitalWrite(_enPin, LOW); // 默认接收模式
     }
-    // 启动专用接收任务，绑定 Core 1，优先级 15（高于 UITask）
-    xTaskCreatePinnedToCore(modbusTask, "HMI_MB", 4096, this, 15, &_taskHandle, 1);
+    // 启动专用接收任务，绑定 Core 1，优先级 3（低于 vControlTask=15，高于 IDLE）
+    xTaskCreatePinnedToCore(modbusTask, "HMI_MB", 4096, this, 3, &_taskHandle, 1);
     if (_logLevel >= MBUS_LOG_INFO) {
         Serial.printf("[ModbusMaster] begin() RX:%d TX:%d EN:%d Baud:%ld\n",
                       _rxPin, _txPin, _enPin, _baud);

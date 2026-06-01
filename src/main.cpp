@@ -197,7 +197,7 @@ void setup() {
         "ControlTask",  // 任务名称
         4096,           // 栈大小
         nullptr,        // 参数
-        10,             // 优先级 (最高)
+        15,             // 优先级 (最高，确保不被 Modbus 等任务抢占)
         &hControlTask,  // 句柄
         1               // 绑定到 Core 1 (Arduino 默认核)
     );
