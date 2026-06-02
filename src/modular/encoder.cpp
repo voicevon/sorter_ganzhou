@@ -126,12 +126,12 @@ void IRAM_ATTR Encoder::handleZPhaseInterrupt() {
     enc->zeroCrossCount++;
     
     // 记录Z相触发时的原始计数值
-    enc->zeroCrossRawCount = enc->rawEncoderCount;
+    enc->zeroCrossRawCount.store(enc->rawEncoderCount.load());
     
     // 当清零时，如果计数器对400取模余数不是0，则强行设为0
     if (enc->rawEncoderCount % 400 != 0) {
         // 记录强制清零时的原始计数值
-        enc->forcedZeroRawCount = enc->rawEncoderCount;
+        enc->forcedZeroRawCount.store(enc->rawEncoderCount.load());
         // 增加强制清零计数
         enc->forcedZeroCount++;
         // 直接设为0

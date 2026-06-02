@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <Wire.h>
+#include <esp_task_wdt.h>
 
 #include "main.h"
 #include "config.h"
@@ -316,7 +317,8 @@ void vUITask(void* pvParameters) {
 // ==========================================
 void loop() {
     // 原始 loop() 在双核模式下已废弃，任务由 vControlTask 和 vUITask 承载
-    // 我们直接删除这个默认创建的 IDLE 任务以节省资源
+    // 为避免看门狗超时重启，需先注销 loopTask 的看门狗监控，再安全删除释放内存
+    esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
 }
 
