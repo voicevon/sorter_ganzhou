@@ -23,6 +23,15 @@ DiameterScanner::DiameterScanner() :
 void DiameterScanner::initialize() {
     for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
         pinMode(scannerPins[i], INPUT);
+        
+        // 预计算快速访问的 GPIO 寄存器地址和掩码
+        if (scannerPins[i] < 32) {
+            fastPins[i].reg = (volatile uint32_t*)&GPIO.in;
+            fastPins[i].mask = (1UL << scannerPins[i]);
+        } else {
+            fastPins[i].reg = (volatile uint32_t*)&GPIO.in1.val;
+            fastPins[i].mask = (1UL << (scannerPins[i] - 32));
+        }
     }
     
     // 移除 initialize() 中的 start() 调用，确保开机时处于受控的静默状态。
@@ -44,11 +53,11 @@ void DiameterScanner::start() {
     previousSampledPhase = -1;
 }
 
-void DiameterScanner::stop() {
+void IRAM_ATTR DiameterScanner::stop() {
     isScanning = false;
 }
 
-void DiameterScanner::sample(int phase) {
+void IRAM_ATTR DiameterScanner::sample(int phase) {
     if (!isScanning) return;
     
     // 终极同步过滤器：只有当相位确实"向前进"时，才进行采样。
@@ -65,12 +74,16 @@ void DiameterScanner::sample(int phase) {
     if (!isForward) return; // 过滤震动回弹或重复触发
     previousSampledPhase = phase;
     
-    // 仅通过数组记录采样点的原始高低电平状态，极大地降低中断开销
+    // 采用底层寄存器读取和位压缩技术，将 4 次数字读取简化为简单的位操作，
+    // 大幅降低中断运行时间和执行延迟。
     if (sampleCount < MAX_SAMPLES) {
+        uint8_t stateBits = 0;
         for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
-            sensorBuffers[i][sampleCount] = (digitalRead(scannerPins[i]) == HIGH) ? 1 : 0;
+            if (*fastPins[i].reg & fastPins[i].mask) {
+                stateBits |= (1 << i);
+            }
         }
-        sampleCount++;
+        sensorBuffers[sampleCount++] = stateBits;
     }
 }
 
@@ -89,8 +102,9 @@ int DiameterScanner::getDiameterAndStop() {
 
     // 后期处理：遍历缓存区，回放采样历史，计算有效高电平脉冲计数
     for (int idx = 0; idx < sampleCount; idx++) {
+        uint8_t samples = sensorBuffers[idx];
         for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
-            bool currentState = (sensorBuffers[i][idx] == 1);
+            bool currentState = (samples & (1 << i)) != 0;
             
             if (currentState) {
                 if (!isObjectDetected[i]) {

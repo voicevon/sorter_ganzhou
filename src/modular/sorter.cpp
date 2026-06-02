@@ -108,7 +108,7 @@ void Sorter::initializeDivergencePoints(const uint8_t positions[NUM_OUTLETS]) {
     }
 }
 
-void Sorter::onPhaseChange(int phase) {
+void IRAM_ATTR Sorter::onPhaseChange(int phase) {
     // 1. 实时采样（必须在中断中完成）
     scanner->sample(phase); 
     
@@ -126,7 +126,7 @@ void Sorter::onPhaseChange(int phase) {
 }
 
 // 实现静态回调函数
-void Sorter::onEncoderPhaseChange(void* context, int phase) {
+void IRAM_ATTR Sorter::onEncoderPhaseChange(void* context, int phase) {
     Sorter* sorter = static_cast<Sorter*>(context);
     sorter->onPhaseChange(phase);
 }

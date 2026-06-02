@@ -70,7 +70,7 @@ public:
     void run();
     
     // 采样回调函数（供编码器调用，参数为相位）
-    void onPhaseChange(int phase);
+    void IRAM_ATTR onPhaseChange(int phase);
 
 
     
@@ -83,7 +83,7 @@ public:
     // 获取显示数据方法已移除，改用专用方法
     
     // 静态回调函数，用于编码器相位变化
-    static void onEncoderPhaseChange(void* context, int phase);
+    static void IRAM_ATTR onEncoderPhaseChange(void* context, int phase);
     
     // 获取最新直径
     int getLatestDiameter();

@@ -38,7 +38,7 @@ private:
     Encoder();
     
     // 触发相位回调的私有方法
-    void triggerPhaseCallback();
+    void IRAM_ATTR triggerPhaseCallback();
     
 public:
     // initialize方法移至public
@@ -74,9 +74,9 @@ public:
     long getForcedZeroRawCount() const { return forcedZeroRawCount; }
     
     // 中断处理函数
-    static void handleAPhaseInterrupt();  // A相中断
-    static void handleBPhaseInterrupt();  // B相中断
-    static void handleZPhaseInterrupt();  // Z相中断
+    static void IRAM_ATTR handleAPhaseInterrupt();  // A相中断
+    static void IRAM_ATTR handleBPhaseInterrupt();  // B相中断
+    static void IRAM_ATTR handleZPhaseInterrupt();  // Z相中断
 };
 
 #endif // ENCODER_H
