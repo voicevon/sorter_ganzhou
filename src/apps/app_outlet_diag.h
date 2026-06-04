@@ -56,6 +56,11 @@ public:
     void setSubMode(int mode);
 
     /**
+     * 手动控制出口状态 (Touch UI)
+     */
+    void setManualOutletState(uint8_t index, bool state);
+
+    /**
      * 处理编码器输入 (用于单点测试模式切换选中出口)
      * @param delta 编码器变化量 (+1 or -1)
      */

@@ -297,6 +297,7 @@ void vUITask(void* pvParameters) {
         // --- 核心同步：处理导航路径意图 (如来自从机切页) ---
         if (intent.action == UIAction::NAVIGATE_PATH) {
             switchToAppType((AppType)intent.value);
+            menuModeActive = false; // 强制退出旧的菜单模式，防止主模式无法退出
         }
         
         uint32_t currentMs = millis();

@@ -124,19 +124,19 @@ void UserInterface::clearDisplay() {
 
 // 获取下一个待处理的用户意图
 UIIntent UserInterface::getNextIntent() {
-    // 依次轮询所有注册的输入源
+    // 1. Tick ALL input sources to prevent starvation (e.g., RS485 dropping packets because a floating rotary encoder returns early)
     for (int i = 0; i < inputSourceCount; i++) {
-        if (inputSources[i] == nullptr) continue;
-        
-        // 执行驱动心跳（如处理异步读取、消抖等）
-        inputSources[i]->tick();
-        
-        // 检查并消费意图
-        if (inputSources[i]->hasIntent()) {
-            return inputSources[i]->pollIntent();
+        if (inputSources[i] != nullptr) {
+            inputSources[i]->tick();
         }
     }
     
+    // 2. Poll for the first available intent
+    for (int i = 0; i < inputSourceCount; i++) {
+        if (inputSources[i] != nullptr && inputSources[i]->hasIntent()) {
+            return inputSources[i]->pollIntent();
+        }
+    }
     return UIIntent(UIAction::NONE);
 }
 

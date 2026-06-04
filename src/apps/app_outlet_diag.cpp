@@ -60,6 +60,7 @@ void AppOutletDiag::setSubMode(int mode) {
         case 0: subModeName = "Normally Closed Test"; break;
         case 1: subModeName = "Single Outlet Test"; break;
         case 2: subModeName = "Lifetime Cycle Test"; break;
+        case 3: subModeName = "Manual Touch Test"; break;
         default: subModeName = "Unknown Mode"; break;
     }
     Serial.println("[DIAGNOSTIC] Outlet Mode explicitly set to: " + subModeName);
@@ -166,6 +167,14 @@ void AppOutletDiag::update(uint32_t currentMs, bool btnPressed) {
             break;
 
         }
+        case 3: {
+            /**
+             * 子模式3：手动触控测试模式 (Manual Touch Test)
+             * 行为：通过RS485触控屏手动点击独立控制，不自动循环
+             */
+            // 无自动循环逻辑，状态由 setManualOutletState 直接更新
+            break;
+        }
     }
 }
 
@@ -257,6 +266,9 @@ void AppOutletDiag::initializeDiagnosticMode(uint32_t currentTime) {
             Serial.println("\n=== Solenoid Lifetime Test ===");
             Serial.println("Cycle: 0 | State: Closed");
             break;
+        case 3:
+            subModeName = "Manual Touch Test";
+            break;
         default:
             subModeName = "Unknown";
     }
@@ -291,6 +303,17 @@ void AppOutletDiag::handleEncoderInput(int delta) {
             Serial.print("[DIAGNOSTIC] Selected outlet changed to: ");
             Serial.println(currentOutlet);
         }
+    }
+}
+
+void AppOutletDiag::setManualOutletState(uint8_t index, bool state) {
+    if (currentSubMode != 3) {
+        setSubMode(3); // 自动切换到手动模式
+    }
+    if (index < NUM_OUTLETS && outlets[index]) {
+        outlets[index]->setReadyToOpen(state);
+        outlets[index]->execute();
+        Serial.printf("[DIAGNOSTIC] Manual Touch: Outlet %d -> %s\n", index, state ? "OPEN" : "CLOSED");
     }
 }
 

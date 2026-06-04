@@ -4,8 +4,10 @@
 #include "../../modular/diameter_scanner.h"
 #include "../../modular/sorter.h"
 #include <EEPROM.h>
+#include "../../apps/app_outlet_diag.h"
 
 extern Sorter sorter;
+extern class AppOutletDiag appOutletDiag;
 
 Rs485TouchScreen* Rs485TouchScreen::getInstance() {
     static Rs485TouchScreen instance;
@@ -107,7 +109,7 @@ void Rs485TouchScreen::refresh(const DisplaySnapshot& snapshot) {
         hasData = true;
     } 
     else if ((_slavePage == "diag_outlets" || _slavePage == "config_outlets") && (snapshot.currentMode == APP_DIAG_OUTLET || snapshot.currentMode == APP_CONFIG_DIAMETER)) {
-        StaticJsonDocument<1024> doc;
+        StaticJsonDocument<2048> doc;
         doc["page"] = _slavePage;
         JsonArray data = doc.createNestedArray("data");
         for (int i = 0; i < NUM_OUTLETS; i++) {
@@ -186,8 +188,8 @@ void Rs485TouchScreen::tick() {
 
     // 2. 发送超时检测（仅在等待 ACK 状态下有效）
     if (_state == STATE_WAITING_ACK) {
-        if (millis() - _txTimestamp > 300) { // 300ms 超时
-            Serial.printf("[Rs485TouchScreen] RX Timeout! No response from slave on page [%s] for >300ms\n", _slavePage.c_str());
+        if (millis() - _txTimestamp > 1000) { // 1000ms 超时
+            Serial.printf("[Rs485TouchScreen] RX Timeout! No response from slave on page [%s] for >1000ms\n", _slavePage.c_str());
             _state = STATE_IDLE;
             _rxBuffer = "";
         }
@@ -238,7 +240,7 @@ void Rs485TouchScreen::processLine(const String& line) {
         return;
     }
 
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<2048> doc;
     DeserializationError error = deserializeJson(doc, jsonStr);
     if (error) {
         Serial.printf("[Rs485TouchScreen] deserializeJson() failed: %s, Raw JsonStr: %s\n", error.c_str(), jsonStr.c_str());
@@ -287,6 +289,7 @@ void Rs485TouchScreen::processLine(const String& line) {
     // Parse events (if any) and push to intent queue
     if (doc.containsKey("events")) {
         JsonArray events = doc["events"];
+        bool needSaveConfig = false;
         for (JsonObject ev : events) {
             String cmd = ev["cmd"] | "";
             int params = ev["params"] | 0;
@@ -295,20 +298,30 @@ void Rs485TouchScreen::processLine(const String& line) {
                 _intentQueue.push(UIIntent(UIAction::SET_VALUE, params));
             } else if (cmd == "menu_click") {
                 _intentQueue.push(UIIntent(UIAction::NAVIGATE_PATH, params));
+            } else if (cmd == "diag_outlet") {
+                int index = ev["index"] | 0;
+                int state = ev["state"] | 0;
+                appOutletDiag.setManualOutletState(index, state == 1);
             } else if (cmd == "set_outlet") {
                 int index = ev["index"] | 0;
                 float min = ev["min"] | 0.0f;
                 float max = ev["max"] | 0.0f;
                 uint8_t mask = ev["mask"] | 0;
                 
+                Serial.printf("[HMI] 收到 set_outlet 指令 -> 出口索引: %d, 原始浮点值: Min=%.1f, Max=%.1f, Mask=%d\n", index, min, max, mask);
+                
                 if (index < NUM_OUTLETS) {
-                    sorter.setOutletMinDiameter(index, (int)(min + 0.05f)); 
-                    sorter.setOutletMaxDiameter(index, (int)(max + 0.05f));
+                    int finalMin = (int)(min + 0.05f);
+                    int finalMax = (int)(max + 0.05f);
+                    sorter.setOutletMinDiameter(index, finalMin); 
+                    sorter.setOutletMaxDiameter(index, finalMax);
                     if (sorter.getOutlet(index)) {
                         sorter.getOutlet(index)->setTargetLength(mask);
                     }
-                    sorter.saveConfig();
-                    Serial.printf("[HMI] Applied Outlet #%d Config: Min=%.1f Max=%.1f Mask=%d\n", index+1, min, max, mask);
+                    needSaveConfig = true;
+                    Serial.printf("[HMI] 已应用出口 #%d 配置到分拣器 -> 实际整数值: Min=%d, Max=%d, Mask=%d\n", index + 1, finalMin, finalMax, mask);
+                } else {
+                    Serial.printf("[HMI] 警告: 收到非法的出口索引 %d (最大允许 %d)\n", index, NUM_OUTLETS - 1);
                 }
             } else if (cmd == "set_offset") {
                 int newOffset = ev["state"] | ev["params"] | 0; // Accept both for compatibility
@@ -321,6 +334,9 @@ void Rs485TouchScreen::processLine(const String& line) {
                 
                 Serial.printf("[HMI] Remote Offset Calibration -> %d (Saved to EEPROM)\n", newOffset);
             }
+        }
+        if (needSaveConfig) {
+            sorter.saveConfig();
         }
     }
 }
