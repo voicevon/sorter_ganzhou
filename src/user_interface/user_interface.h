@@ -2,10 +2,14 @@
 #define USER_INTERFACE_H
 
 #include <Arduino.h>
+#include <queue>
 #include "common/input_source.h"
-#include "common/display.h"  // 包含Display抽象基类
+#include "common/display.h"
 #include "common/display_types.h"
-
+#include "paradigm/i_knob_device.h"
+#include "paradigm/i_touch_device.h"
+#include "paradigm/i_term_device.h"
+#include "command_dispatcher.h"
 
 // 前向声明，不需要包含具体实现的头文件
 class OLED;
@@ -50,15 +54,30 @@ private:
     
     // 内部组件已移除，改为由外部注入
     
-    // 输入设备数组
+    // 输入设备数组（旧接口，保留向下兼容）
     static const int MAX_INPUT_SOURCES = 4;
     InputSource* inputSources[MAX_INPUT_SOURCES];
     int inputSourceCount;
     
-    // 显示设备数组
-    static const int MAX_DISPLAY_DEVICES = 4;  // 最大显示设备数量
-    Display* displayDevices[MAX_DISPLAY_DEVICES];  // 显示设备数组
-    int displayDeviceCount;  // 当前显示设备数量
+    // 显示设备数组（旧接口，保留向下兼容）
+    static const int MAX_DISPLAY_DEVICES = 4;
+    Display* displayDevices[MAX_DISPLAY_DEVICES];
+    int displayDeviceCount;
+
+    // ── 三范式子系统设备数组 ──────────────────────────────────────────────────
+    static const int MAX_KNOB_DEVICES  = 2;
+    static const int MAX_TOUCH_DEVICES = 4;
+    static const int MAX_TERM_DEVICES  = 2;
+
+    IKnobDevice*  knobDevices[MAX_KNOB_DEVICES];
+    ITouchDevice* touchDevices[MAX_TOUCH_DEVICES];
+    ITermDevice*  termDevices[MAX_TERM_DEVICES];
+    int knobDeviceCount  = 0;
+    int touchDeviceCount = 0;
+    int termDeviceCount  = 0;
+
+    // 内部意图队列（来自触摸/终端范式的导航指令）
+    std::queue<UIIntent> _intentQueue;
     
     // 输出控制
     uint8_t outputChannels;  // 输出渠道掩码
@@ -84,7 +103,27 @@ public:
   // 添加输入源的静态方法
   static void addInputSource(InputSource* source);
     
-    // 核心快照刷新接口：广播至所有注册的显示器
+    // ── 新接口：三范式子系统设备注册 ──────────────────────────────────────────
+    void addKnobDevice(IKnobDevice* dev);   // 注册旋钮菜单设备
+    void addTouchDevice(ITouchDevice* dev); // 注册触摸直控设备
+    void addTermDevice(ITermDevice* dev);   // 注册终端设备
+
+    /**
+     * @brief 广播快照到所有子系统（旧 Display + 新三范式设备）
+     * 替代 refreshAllDevices()，统一广播入口。
+     */
+    void broadcastSnapshot(const DisplaySnapshot& snapshot);
+
+    /**
+     * @brief 轮询并调度所有触摸/终端设备的待处理指令
+     * 在 vUITask 主循环中调用（每帧一次）。
+     * - 导航类 RichCommand（nav_relative/activate/back）→ 推入内部 UIIntent 队列
+     * - 其他 RichCommand → CommandDispatcher
+     * - 终端文本命令 → CommandDispatcher::dispatchText()
+     */
+    void dispatchPendingCommands();
+
+    // 核心快照刷新接口（旧接口，保留兼容）
     void refreshAllDevices(const DisplaySnapshot& snapshot);
     
     // 统一菜单显示代理

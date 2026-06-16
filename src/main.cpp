@@ -6,6 +6,12 @@
 #include "main.h"
 #include "config.h"
 #include "user_interface/user_interface.h"
+#include "user_interface/drv_oled_rotary/oled_knob_device.h"    // Phase4: Façade
+#include "user_interface/drv_terminal/serial_term_device.h"    // Phase5
+#include "user_interface/drv_rs485_screen/rs485_touch_device.h" // Phase2
+#include "user_interface/drv_mcgs/mcgs_touch_device.h"          // Phase3
+#include "user_interface/command_dispatcher.h"                  // Phase1
+// 旧头文件（期间保留兼容）
 #include "user_interface/drv_oled_rotary/oled.h"
 #include "user_interface/drv_terminal/terminal.h"
 #include "user_interface/common/menu_system.h"
@@ -57,6 +63,7 @@ void vUITask(void* pvParameters);
 void handleReturnToMenu();
 void handleMenuMode(const UIIntent& intent);
 void updateActiveApp(uint32_t currentMs, bool btnPressed, int delta);
+void setupCommandDispatcher(); // Phase7
 
 // ── 初始化子函数 ────────────────────────────────────────────────────────
 
@@ -69,50 +76,42 @@ void setupHmi() {
 
     bool anyHmi = false;
 
-    #if ENABLE_HMI_TERMINAL
-        Terminal* term = Terminal::getInstance();
-        term->initialize();
-        userInterface->addDisplayDevice(term);
-        userInterface->enableOutputChannel(OUTPUT_SERIAL);
-        Serial.println("[BOOT] HMI: TERMINAL Enabled");
-        anyHmi = true;
-    #endif
+    // ── 新范式注册（Phase 2-5）───────────────────────────────────────
 
     #if ENABLE_HMI_OLED_ROTARY
-        OLED* oled = OLED::getInstance();
-        oled->initialize();
-        userInterface->addDisplayDevice(oled);
-        
-        RotaryInputSource* rotary = RotaryInputSource::getInstance();
-        rotary->initialize();
-        userInterface->addInputSource(rotary);
-        
-        userInterface->enableOutputChannel(OUTPUT_OLED);
-        Serial.println("[BOOT] HMI: OLED_ROTARY Enabled");
-        anyHmi = true;
-    #endif
-
-    #if ENABLE_HMI_MCGS
-        static McgsDisplay mcgs;
-        mcgs.initialize();
-        userInterface->addDisplayDevice(&mcgs);
-        userInterface->addInputSource(&mcgs);
-        Serial.println("[BOOT] HMI: MCGS Enabled");
+        // Phase4: Façade —— 旋钮菜单范式
+        static OledKnobDevice oledKnob;
+        oledKnob.initialize();
+        userInterface->addKnobDevice(&oledKnob);
+        Serial.println("[BOOT] HMI: OLED_ROTARY -> KnobDevice Enabled");
         anyHmi = true;
     #endif
 
     #if ENABLE_HMI_RS485
-        Serial.println("[BOOT] HMI: >> Initializing RS485_TOUCHSCREEN HMI...");
-        Rs485TouchScreen* hmiScreen = Rs485TouchScreen::getInstance();
-        hmiScreen->initialize();
-        
-        Serial.println("[BOOT] HMI: >> Injecting RS485_TOUCHSCREEN as Display Device...");
-        userInterface->addDisplayDevice(hmiScreen);
-        
-        Serial.println("[BOOT] HMI: >> Injecting RS485_TOUCHSCREEN as Input Source...");
-        userInterface->addInputSource(hmiScreen);
-        
-        Serial.println("[BOOT] HMI: RS485_TOUCHSCREEN successfully initialized and injected.");
+        // Phase2: RS485 —— 触摸直控范式
+        Serial.println("[BOOT] HMI: >> Initializing RS485_TOUCH...");
+        Rs485TouchDevice* rs485Touch = Rs485TouchDevice::getInstance();
+        rs485Touch->initialize();
+        userInterface->addTouchDevice(rs485Touch);
+        Serial.println("[BOOT] HMI: RS485_TOUCH -> TouchDevice Enabled");
+        anyHmi = true;
+    #endif
+
+    #if ENABLE_HMI_MCGS
+        // Phase3: MCGS —— 触摸直控范式
+        static McgsTouchDevice mcgsTouch;
+        mcgsTouch.initialize();
+        userInterface->addTouchDevice(&mcgsTouch);
+        Serial.println("[BOOT] HMI: MCGS -> TouchDevice Enabled");
+        anyHmi = true;
+    #endif
+
+    #if ENABLE_HMI_TERMINAL
+        // Phase5: 终端—— 键盘终端范式（补全输入侧）
+        static SerialTermDevice serialTerm;
+        serialTerm.initialize();
+        userInterface->addTermDevice(&serialTerm);
+        Serial.println("[BOOT] HMI: TERMINAL -> TermDevice Enabled");
         anyHmi = true;
     #endif
 
@@ -120,7 +119,7 @@ void setupHmi() {
         Serial.println("[BOOT] HMI: NONE");
     }
 
-    userInterface->initialize(); // 初始化 UI 逻辑状态
+    userInterface->initialize();
 }
 
 /**
@@ -176,6 +175,9 @@ void setup() {
     
     // 1. 硬件/驱动注入
     setupHmi();
+    
+    // 1b. 当前业务 Handler 注册到 CommandDispatcher
+    setupCommandDispatcher();
     
     // 2. 数据与持久化
     setupSystemData();
@@ -286,18 +288,19 @@ void vUITask(void* pvParameters) {
     Serial.println("[FreeRTOS] UITask (Core 0) started.");
 
     for (;;) {
+        // ── 调度触摸/终端子系统的待处理指令 ──
+        // （必须在 getNextIntent() 之前，预充 _intentQueue）
+        userInterface->dispatchPendingCommands();
+
         // ── 意图驱动输入 ──
-        // 自动轮询所有已注册的输入源 (如物理旋钮、MCGS 触控、串口指令)
         UIIntent intent = userInterface->getNextIntent();
         
-        // 映射为旧逻辑兼容变量
         int delta = (intent.action == UIAction::NAVIGATE_RELATIVE) ? intent.value : 0;
         bool btnPressed = (intent.action == UIAction::ACTIVATE);
         
-        // --- 核心同步：处理导航路径意图 (如来自从机切页) ---
         if (intent.action == UIAction::NAVIGATE_PATH) {
             switchToAppType((AppType)intent.value);
-            menuModeActive = false; // 强制退出旧的菜单模式，防止主模式无法退出
+            menuModeActive = false;
         }
         
         uint32_t currentMs = millis();
@@ -308,7 +311,6 @@ void vUITask(void* pvParameters) {
             updateActiveApp(currentMs, btnPressed, delta);
         }
         
-        // 给系统任务（如 Watchdog/WiFi）留出时间，并维持约 30Hz 刷新
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
@@ -333,5 +335,80 @@ void handleReturnToMenu() {
     userInterface->renderMenu(menuSystem.getCurrentNode(), menuSystem.getCursorIndex(), menuSystem.getScrollOffset());
 }
 
+// ── Phase7: CommandDispatcher Handler 注册 ────────────────────────────────────
+// 业务 Handler 在此集中注册，驱动层（TouchDevice / TermDevice）不再直接调用业务对象。
+
+void setupCommandDispatcher() {
+    auto& d = CommandDispatcher::getInstance();
+
+    // ── 页面切换（来自 RS485 / BLE 的 page_sync，paramI < 0 时由 dispatchPendingCommands 转为 NAVIGATE_PATH）
+    // page_sync 中 paramI >= 0 的情况已在 dispatchPendingCommands() 转为 UIIntent(NAVIGATE_PATH)
+    // paramI < 0（未知页面）时走此 Handler 处理
+    d.registerHandler("page_sync", [](const RichCommand& cmd) {
+        if (cmd.paramI < 0) {
+            Serial.printf("[Dispatcher] Unknown page_sync: '%s'\n", cmd.strParam.c_str());
+        }
+    });
+
+    // ── 出口配置写入（来自 RS485 / BLE 的 set_outlet）
+    d.registerHandler("set_outlet", [](const RichCommand& cmd) {
+        if (cmd.index < 0 || cmd.index >= NUM_OUTLETS) return;
+        int newMin = (int)(cmd.paramF  + 0.05f);
+        int newMax = (int)(cmd.paramF2 + 0.05f);
+        sorter.setOutletMinDiameter(cmd.index, newMin);
+        sorter.setOutletMaxDiameter(cmd.index, newMax);
+        sorter.saveConfig();
+        Serial.printf("[Dispatcher] set_outlet: O%d min=%d max=%d\n",
+                      cmd.index, newMin, newMax);
+    });
+
+    // ── 出口诊断（手动控制出口开关，来自 RS485 / BLE 的 diag_outlet）
+    d.registerHandler("diag_outlet", [](const RichCommand& cmd) {
+        if (cmd.index < 0 || cmd.index >= NUM_OUTLETS) return;
+        appOutletDiag.setManualOutletState(cmd.index, cmd.paramB);
+        Serial.printf("[Dispatcher] diag_outlet: O%d -> %s\n",
+                      cmd.index, cmd.paramB ? "OPEN" : "CLOSE");
+    });
+
+    // ── 编码器相位偏移（来自 RS485 / BLE 的 set_offset）
+    d.registerHandler("set_offset", [](const RichCommand& cmd) {
+        uint8_t newOffset = (uint8_t)(cmd.paramI & 0xFF);
+        encoder->setPhaseOffset(newOffset);
+        EEPROM.write(EEPROM_ADDR_PHASE_OFFSET, 0xA5);
+        EEPROM.write(EEPROM_ADDR_PHASE_OFFSET + 1, newOffset);
+        EEPROM.commit();
+        Serial.printf("[Dispatcher] set_offset: %d (saved to EEPROM)\n", newOffset);
+    });
+
+    // ── MCGS 参数写入（Modbus 寄存器 → EEPROM，来自 McgsTouchDevice）
+    d.registerHandler("mcgs_write_param", [](const RichCommand& cmd) {
+        uint8_t outletIdx = (uint8_t)cmd.index;
+        uint8_t field     = (uint8_t)cmd.paramI;
+        uint16_t value    = (uint16_t)cmd.paramF;
+        if (outletIdx >= NUM_OUTLETS) return;
+        int eepromOffset = EEPROM_ADDR_DIAMETER_DATA + outletIdx * 3;
+        switch (field) {
+            case 0: EEPROM.write(eepromOffset,     (uint8_t)(value / 100)); break; // MIN
+            case 1: EEPROM.write(eepromOffset + 1, (uint8_t)(value / 100)); break; // MAX
+            case 2: EEPROM.write(eepromOffset + 2, (uint8_t)(value & 0x07)); break; // LEN_MASK
+            case 3: if (outletIdx == 0) EEPROM.write(EEPROM_ADDR_OUTLET0_MODE, (uint8_t)(value & 0x01)); break; // MODE
+        }
+        Serial.printf("[Dispatcher] mcgs_write_param: O%d field=%d value=%d\n", outletIdx, field, value);
+    });
+
+    // ── EEPROM 持久化（来自 McgsTouchDevice 的 CmdConfirm）
+    d.registerHandler("eeprom_commit", [](const RichCommand&) {
+        EEPROM.commit();
+        Serial.println("[Dispatcher] eeprom_commit done.");
+    });
+
+    // ── 清零（Tare，来自 RS485 / BLE）
+    d.registerHandler("tare", [](const RichCommand& cmd) {
+        Serial.printf("[Dispatcher] tare: params=%d\n", cmd.paramI);
+        // TODO: 根据 paramI 实现清零逻辑
+    });
+
+    Serial.println("[Dispatcher] All handlers registered.");
+}
 
 //  测量直径很稳定的版本了

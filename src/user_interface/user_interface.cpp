@@ -124,14 +124,26 @@ void UserInterface::clearDisplay() {
 
 // 获取下一个待处理的用户意图
 UIIntent UserInterface::getNextIntent() {
-    // 1. Tick ALL input sources to prevent starvation (e.g., RS485 dropping packets because a floating rotary encoder returns early)
+    // 优先级1：来自触摸/终端范式的导航指令（由 dispatchPendingCommands 推入）
+    if (!_intentQueue.empty()) {
+        UIIntent intent = _intentQueue.front();
+        _intentQueue.pop();
+        return intent;
+    }
+
+    // 优先级2：旋钮范式设备（新接口，IKnobDevice）
+    for (int i = 0; i < knobDeviceCount; i++) {
+        if (knobDevices[i]->hasIntent()) {
+            return knobDevices[i]->pollIntent();
+        }
+    }
+
+    // 优先级3：旧 InputSource 数组（向下兼容，期间两套并存）
     for (int i = 0; i < inputSourceCount; i++) {
         if (inputSources[i] != nullptr) {
             inputSources[i]->tick();
         }
     }
-    
-    // 2. Poll for the first available intent
     for (int i = 0; i < inputSourceCount; i++) {
         if (inputSources[i] != nullptr && inputSources[i]->hasIntent()) {
             return inputSources[i]->pollIntent();
@@ -303,16 +315,110 @@ void UserInterface::output(const String& message, OutputChannel channels) {
 
 // 输出带换行的消息到指定渠道
 void UserInterface::outputLine(const String& message, OutputChannel channels) {
-    // 翻译消息
     String translatedMessage = translate(message);
-    
-    // 输出到串口
     if ((channels & OUTPUT_SERIAL) && isOutputChannelEnabled(OUTPUT_SERIAL)) {
         Serial.println(translatedMessage);
     }
-    
-    // OLED输出需要特殊处理，暂时只支持串口
-    // 可以在未来扩展OLED的直接文本输出功能
 }
 
+// ── 三范式子系统：设备注册 ────────────────────────────────────────────────────
 
+void UserInterface::addKnobDevice(IKnobDevice* dev) {
+    if (!dev || knobDeviceCount >= MAX_KNOB_DEVICES) return;
+    for (int i = 0; i < knobDeviceCount; i++) if (knobDevices[i] == dev) return;
+    knobDevices[knobDeviceCount++] = dev;
+    Serial.printf("[UI] KnobDevice added: %s (total=%d)\n", dev->getName().c_str(), knobDeviceCount);
+}
+
+void UserInterface::addTouchDevice(ITouchDevice* dev) {
+    if (!dev || touchDeviceCount >= MAX_TOUCH_DEVICES) return;
+    for (int i = 0; i < touchDeviceCount; i++) if (touchDevices[i] == dev) return;
+    touchDevices[touchDeviceCount++] = dev;
+    Serial.printf("[UI] TouchDevice added: %s (total=%d)\n", dev->getName().c_str(), touchDeviceCount);
+}
+
+void UserInterface::addTermDevice(ITermDevice* dev) {
+    if (!dev || termDeviceCount >= MAX_TERM_DEVICES) return;
+    for (int i = 0; i < termDeviceCount; i++) if (termDevices[i] == dev) return;
+    termDevices[termDeviceCount++] = dev;
+    Serial.printf("[UI] TermDevice added: %s (total=%d)\n", dev->getName().c_str(), termDeviceCount);
+}
+
+// ── broadcastSnapshot：广播快照到所有子系统 ───────────────────────────────────
+
+void UserInterface::broadcastSnapshot(const DisplaySnapshot& snapshot) {
+    // 1. 旧 Display 数组（向下兼容）
+    refreshAllDevices(snapshot);
+
+    // 2. 旋钮设备：刷新快照（在 App 页面显示数据）
+    for (int i = 0; i < knobDeviceCount; i++) {
+        knobDevices[i]->refreshSnapshot(snapshot);
+    }
+
+    // 3. 触摸设备：推送快照到对端
+    for (int i = 0; i < touchDeviceCount; i++) {
+        touchDevices[i]->pushSnapshot(snapshot);
+    }
+
+    // 4. 终端设备：ASCII 输出快照（内部自带节流）
+    for (int i = 0; i < termDeviceCount; i++) {
+        termDevices[i]->pushSnapshot(snapshot);
+    }
+}
+
+// ── dispatchPendingCommands：调度所有待处理指令 ───────────────────────────────
+
+void UserInterface::dispatchPendingCommands() {
+    auto& dispatcher = CommandDispatcher::getInstance();
+
+    // ── 1. 触摸设备 tick + 指令路由 ─────────────────────────────────────────
+    for (int i = 0; i < touchDeviceCount; i++) {
+        touchDevices[i]->tick();
+        while (touchDevices[i]->hasCommand()) {
+            RichCommand cmd = touchDevices[i]->pollCommand();
+            if (!cmd.isValid()) continue;
+
+            // 导航类命令 → UIIntent 队列（与旋钮范式共享处理路径）
+            if (cmd.cmd == "nav_relative") {
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_RELATIVE, cmd.paramI));
+            } else if (cmd.cmd == "activate") {
+                _intentQueue.push(UIIntent(UIAction::ACTIVATE));
+            } else if (cmd.cmd == "back") {
+                _intentQueue.push(UIIntent(UIAction::BACK));
+            } else if (cmd.cmd == "page_sync" && cmd.paramI >= 0) {
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_PATH, cmd.paramI));
+            } else {
+                // 业务指令 → CommandDispatcher
+                dispatcher.dispatch(cmd);
+            }
+        }
+    }
+
+    // ── 2. 终端设备 tick + 文本命令路由 ─────────────────────────────────────
+    for (int i = 0; i < termDeviceCount; i++) {
+        termDevices[i]->tick();
+        while (termDevices[i]->hasCommand()) {
+            String line = termDevices[i]->pollCommand();
+            if (line.length() == 0) continue;
+
+            // 简单导航命令直接转 UIIntent，其余走 dispatchText
+            if      (line == "ACTIVATE") _intentQueue.push(UIIntent(UIAction::ACTIVATE));
+            else if (line == "BACK")     _intentQueue.push(UIIntent(UIAction::BACK));
+            else if (line == "CANCEL")   _intentQueue.push(UIIntent(UIAction::CANCEL));
+            else if (line.startsWith("NAV:")) {
+                int delta = line.substring(4).toInt();
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_RELATIVE, delta));
+            } else {
+                dispatcher.dispatchText(line);
+            }
+        }
+    }
+
+    // ── 3. 旋钮设备 tick（旋钮由 getNextIntent() 消费，此处只 tick）─────────
+    for (int i = 0; i < knobDeviceCount; i++) {
+        knobDevices[i]->tick();
+    }
+}
+
+// ── getNextIntent：优先消费内部 UIIntent 队列，再轮询旋钮设备 ─────────────────
+// 覆盖现有实现（此处追加版，现有的会被编译器看到两份 —— 需替换现有实现）
