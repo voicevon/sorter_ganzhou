@@ -6,13 +6,21 @@ UserInterface* UserInterface::instance = nullptr;
 
 // 私有构造函数实现
 UserInterface::UserInterface() {
-    hmi = SimpleHMI::getInstance();
+    instance = this; // 立即赋值，防止 addInputSource 内部触发递归
     
     // 初始化显示设备数组
     displayDeviceCount = 0;
     for (int i = 0; i < MAX_DISPLAY_DEVICES; i++) {
         displayDevices[i] = nullptr;
     }
+    
+    // 初始化输入设备数组
+    inputSourceCount = 0;
+    for (int i = 0; i < MAX_INPUT_SOURCES; i++) {
+        inputSources[i] = nullptr;
+    }
+    
+    // 不再默认添加物理旋钮，改为在 main.cpp 中显式添加
     
     // 初始化输出渠道（默认禁用所有输出渠道，需要在setup()中显式启用）
     outputChannels = 0;
@@ -42,9 +50,9 @@ UserInterface* UserInterface::getInstance() {
     return instance;
 }
 
-// 初始化所有 UI 硬件（不创建显示设备实例）
+// 初始化所有 UI 状态
 void UserInterface::initialize() {
-    hmi->initialize();
+    // 不再初始化硬件，硬件初始化移至 main.cpp
     // 不再创建显示设备实例，改为由外部注入
 }
 
@@ -54,168 +62,47 @@ void UserInterface::addExternalDisplayDevice(Display* display) {
     getInstance()->addDisplayDevice(display);
 }
 
-// 更新显示内容 - 已移除，改用功能专用方法
+// 添加输入源的静态方法
+void UserInterface::addInputSource(InputSource* source) {
+    if (source == nullptr) return;
+    
+    UserInterface* ui = getInstance();
+    if (ui->inputSourceCount >= MAX_INPUT_SOURCES) return;
+    
+    // 检查重复
+    for (int i = 0; i < ui->inputSourceCount; i++) {
+        if (ui->inputSources[i] == source) return;
+    }
+    
+    ui->inputSources[ui->inputSourceCount++] = source;
+}
 
-// 显示模式变化信息
-void UserInterface::displayModeChange(SystemMode newMode) {
-    // 遍历所有显示设备
+void UserInterface::refreshAllDevices(const DisplaySnapshot& snapshot) {
+    static DisplaySnapshot lastSnapshot;
+    static bool isFirst = true;
+    static uint32_t lastRefreshMs = 0;
+    
+    bool forceRefresh = (millis() - lastRefreshMs >= 500);
+    
+    if (!isFirst && !forceRefresh && memcmp(&snapshot, &lastSnapshot, sizeof(DisplaySnapshot)) == 0) {
+        return; // No changes detected and within 500ms, swallow the refresh to save bandwidth
+    }
+    
+    isFirst = false;
+    lastRefreshMs = millis();
+    memcpy(&lastSnapshot, &snapshot, sizeof(DisplaySnapshot));
+
     for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayModeChange(newMode);
+        displayDevices[i]->refresh(snapshot);
     }
 }
 
-// 显示出口状态变化
-void UserInterface::displayOutletStatus(uint8_t outletIndex, bool isOpen) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayOutletStatus(outletIndex, isOpen);
-    }
-}
-
-void UserInterface::displayDiagnosticInfo(const String& title, const String& info) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayDiagnosticInfo(title, info);
-    }
-}
-
-// 显示配置详情（带针对长度选择的反色显示）
-void UserInterface::displayConfigEdit(const String& title, int maxV, int minV, uint8_t targetMode, int activeField) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayConfigEdit(title, maxV, minV, targetMode, activeField);
-    }
-}
-
-// 显示出口测试模式图形
-void UserInterface::displayOutletTestGraphic(uint8_t outletCount, uint8_t selectedOutlet, bool isOpen, int subMode) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayOutletTestGraphic(outletCount, selectedOutlet, isOpen, subMode);
-    }
-}
-
-// 专门用于寿命测试的显示方法
-void UserInterface::displayOutletLifetimeGraphic(uint8_t outletCount, uint32_t cycleCount, bool outletState, int subMode) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        // 调用寿命测试专用的显示方法，直接传递完整的循环次数
-        displayDevices[i]->displayOutletLifetimeTestGraphic(outletCount, cycleCount, outletState, subMode);
-    }
-}
-
-// 显示扫描仪编码器值 - 诊断模式不建议使用统一速率限制，以便观察快速变化
-void UserInterface::displayScannerEncoderValues(const int* risingValues, const int* fallingValues) {
-    // 直接遍历所有显示设备并更新
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayScannerEncoderValues(risingValues, fallingValues);
-    }
-}
-
-// 显示系统仪表盘 - 仅在强制刷新（如相位触发）时更新，移除定时刷新以保持界面稳定
-void UserInterface::displayDashboard(float sortingSpeedPerSecond, int sortingSpeedPerMinute, int sortingSpeedPerHour, int identifiedCount, int transportedTrayCount, int latestDiameter, int latestScanCount, int latestLengthLevel, bool forceRefresh) {
-    if (forceRefresh) {
-        // 遍历所有显示设备
-        for (int i = 0; i < displayDeviceCount; i++) {
-            displayDevices[i]->displayDashboard(sortingSpeedPerSecond, sortingSpeedPerMinute, sortingSpeedPerHour, identifiedCount, transportedTrayCount, latestDiameter, latestScanCount, latestLengthLevel);
-        }
-        updateLastUpdateTime();
-    }
-}
-
-// 显示直径信息 - 仅在测量结束触发时更新
-void UserInterface::displayDiameter(int latestDiameter, bool forceRefresh) {
-    if (forceRefresh) {
-        // 遍历所有显示设备
-        for (int i = 0; i < displayDeviceCount; i++) {
-            displayDevices[i]->displayNormalModeDiameter(latestDiameter);
-        }
-        updateLastUpdateTime();
-    }
-}
-
-// 显示正常模式直径信息（兼容旧接口）
-void UserInterface::displayNormalModeDiameter(int latestDiameter, bool forceRefresh) {
-    // 调用新的功能专用方法
-    displayDiameter(latestDiameter, forceRefresh);
-}
-
-// 代理菜单渲染
 void UserInterface::renderMenu(MenuNode* node, int cursorIndex, int scrollOffset) {
-    // 遍历所有显示设备
     for (int i = 0; i < displayDeviceCount; i++) {
         displayDevices[i]->renderMenu(node, cursorIndex, scrollOffset);
     }
 }
 
-// 通用显示方法实现
-void UserInterface::displaySpeedStats(int speedPerSecond, int speedPerMinute, int speedPerHour, int itemCount, int trayCount) {
-    // 检查是否可以更新显示
-    if (isUpdateReady()) {
-        // 遍历所有显示设备
-        for (int i = 0; i < displayDeviceCount; i++) {
-            displayDevices[i]->displaySpeedStats(speedPerSecond, speedPerMinute, speedPerHour, itemCount, trayCount);
-        }
-        
-        // 更新上次更新时间
-        updateLastUpdateTime();
-    }
-}
-
-void UserInterface::displaySingleValue(const String& label, int value, const String& unit) {
-    // 检查是否可以更新显示
-    if (isUpdateReady()) {
-        // 遍历所有显示设备
-        for (int i = 0; i < displayDeviceCount; i++) {
-            displayDevices[i]->displaySingleValue(label, value, unit);
-        }
-        
-        // 更新上次更新时间
-        updateLastUpdateTime();
-    }
-}
-
-void UserInterface::displayPositionInfo(const String& title, int position, bool showOnlyOnChange) {
-    // 检查是否可以更新显示
-    if (isUpdateReady() || showOnlyOnChange) {
-        // 遍历所有显示设备
-        for (int i = 0; i < displayDeviceCount; i++) {
-            displayDevices[i]->displayPositionInfo(title, position, showOnlyOnChange);
-        }
-        
-        // 更新上次更新时间
-        updateLastUpdateTime();
-    }
-}
-
-void UserInterface::displayDiagnosticValues(const String& title, const String& value1, const String& value2) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayDiagnosticValues(title, value1, value2);
-    }
-}
-
-void UserInterface::displayMultiLineText(const String& title, const String& line1, const String& line2, const String& line3, const String& line4, const String& line5) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayMultiLineText(title, line1, line2, line3, line4, line5);
-    }
-}
-
-// 更新的模式变化显示方法
-void UserInterface::displayModeChange(const String& newModeName) {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->displayModeChange(newModeName);
-    }
-}
-
-void UserInterface::resetDiagnosticMode() {
-    // 遍历所有显示设备
-    for (int i = 0; i < displayDeviceCount; i++) {
-        displayDevices[i]->resetDiagnosticMode();
-    }
-}
 
 // 检查显示器是否可用
 bool UserInterface::isDisplayAvailable() const {
@@ -235,24 +122,54 @@ void UserInterface::clearDisplay() {
     }
 }
 
-// 获取编码器旋转增量
+// 获取下一个待处理的用户意图
+UIIntent UserInterface::getNextIntent() {
+    // 优先级1：来自触摸/终端范式的导航指令（由 dispatchPendingCommands 推入）
+    if (!_intentQueue.empty()) {
+        UIIntent intent = _intentQueue.front();
+        _intentQueue.pop();
+        return intent;
+    }
+
+    // 优先级2：旋钮范式设备（新接口，IKnobDevice）
+    for (int i = 0; i < knobDeviceCount; i++) {
+        if (knobDevices[i]->hasIntent()) {
+            return knobDevices[i]->pollIntent();
+        }
+    }
+
+    // 优先级3：旧 InputSource 数组（向下兼容，期间两套并存）
+    for (int i = 0; i < inputSourceCount; i++) {
+        if (inputSources[i] != nullptr) {
+            inputSources[i]->tick();
+        }
+    }
+    for (int i = 0; i < inputSourceCount; i++) {
+        if (inputSources[i] != nullptr && inputSources[i]->hasIntent()) {
+            return inputSources[i]->pollIntent();
+        }
+    }
+    return UIIntent(UIAction::NONE);
+}
+
+// [已弃用] 获取编码器旋转增量
 int UserInterface::getEncoderDelta() {
-    return hmi->getEncoderDelta();
+    return 0;
 }
-
-// 获取原始旋转增量 (1:1 高灵敏度)
+ 
+// [已弃用] 获取原始旋转增量 (1:1 高灵敏度)
 int UserInterface::getRawEncoderDelta() {
-    return hmi->getRawEncoderDelta();
+    return 0;
 }
-
-// 检查主按钮是否被按下
+ 
+// [已弃用] 检查主按钮是否被按下
 bool UserInterface::isMasterButtonPressed() {
-    return hmi->isMasterButtonPressed();
+    return false;
 }
-
-// 检查主按钮是否被长按
+ 
+// [已弃用] 检查主按钮是否被长按
 bool UserInterface::isMasterButtonLongPressed() {
-    return hmi->isMasterButtonLongPressed();
+    return false;
 }
 
 // 启用指定输出渠道
@@ -333,6 +250,14 @@ void UserInterface::clearAllDisplayDevices() {
     displayDeviceCount = 0;
 }
 
+// 清除所有输入源
+void UserInterface::clearAllInputSources() {
+    for (int i = 0; i < inputSourceCount; i++) {
+        inputSources[i] = nullptr;
+    }
+    inputSourceCount = 0;
+}
+
 // 设置当前语言
 void UserInterface::setLanguage(Language language) {
     currentLanguage = language;
@@ -390,16 +315,110 @@ void UserInterface::output(const String& message, OutputChannel channels) {
 
 // 输出带换行的消息到指定渠道
 void UserInterface::outputLine(const String& message, OutputChannel channels) {
-    // 翻译消息
     String translatedMessage = translate(message);
-    
-    // 输出到串口
     if ((channels & OUTPUT_SERIAL) && isOutputChannelEnabled(OUTPUT_SERIAL)) {
         Serial.println(translatedMessage);
     }
-    
-    // OLED输出需要特殊处理，暂时只支持串口
-    // 可以在未来扩展OLED的直接文本输出功能
 }
 
+// ── 三范式子系统：设备注册 ────────────────────────────────────────────────────
 
+void UserInterface::addKnobDevice(IKnobDevice* dev) {
+    if (!dev || knobDeviceCount >= MAX_KNOB_DEVICES) return;
+    for (int i = 0; i < knobDeviceCount; i++) if (knobDevices[i] == dev) return;
+    knobDevices[knobDeviceCount++] = dev;
+    Serial.printf("[UI] KnobDevice added: %s (total=%d)\n", dev->getName().c_str(), knobDeviceCount);
+}
+
+void UserInterface::addTouchDevice(ITouchDevice* dev) {
+    if (!dev || touchDeviceCount >= MAX_TOUCH_DEVICES) return;
+    for (int i = 0; i < touchDeviceCount; i++) if (touchDevices[i] == dev) return;
+    touchDevices[touchDeviceCount++] = dev;
+    Serial.printf("[UI] TouchDevice added: %s (total=%d)\n", dev->getName().c_str(), touchDeviceCount);
+}
+
+void UserInterface::addTermDevice(ITermDevice* dev) {
+    if (!dev || termDeviceCount >= MAX_TERM_DEVICES) return;
+    for (int i = 0; i < termDeviceCount; i++) if (termDevices[i] == dev) return;
+    termDevices[termDeviceCount++] = dev;
+    Serial.printf("[UI] TermDevice added: %s (total=%d)\n", dev->getName().c_str(), termDeviceCount);
+}
+
+// ── broadcastSnapshot：广播快照到所有子系统 ───────────────────────────────────
+
+void UserInterface::broadcastSnapshot(const DisplaySnapshot& snapshot) {
+    // 1. 旧 Display 数组（向下兼容）
+    refreshAllDevices(snapshot);
+
+    // 2. 旋钮设备：刷新快照（在 App 页面显示数据）
+    for (int i = 0; i < knobDeviceCount; i++) {
+        knobDevices[i]->refreshSnapshot(snapshot);
+    }
+
+    // 3. 触摸设备：推送快照到对端
+    for (int i = 0; i < touchDeviceCount; i++) {
+        touchDevices[i]->pushSnapshot(snapshot);
+    }
+
+    // 4. 终端设备：ASCII 输出快照（内部自带节流）
+    for (int i = 0; i < termDeviceCount; i++) {
+        termDevices[i]->pushSnapshot(snapshot);
+    }
+}
+
+// ── dispatchPendingCommands：调度所有待处理指令 ───────────────────────────────
+
+void UserInterface::dispatchPendingCommands() {
+    auto& dispatcher = CommandDispatcher::getInstance();
+
+    // ── 1. 触摸设备 tick + 指令路由 ─────────────────────────────────────────
+    for (int i = 0; i < touchDeviceCount; i++) {
+        touchDevices[i]->tick();
+        while (touchDevices[i]->hasCommand()) {
+            RichCommand cmd = touchDevices[i]->pollCommand();
+            if (!cmd.isValid()) continue;
+
+            // 导航类命令 → UIIntent 队列（与旋钮范式共享处理路径）
+            if (cmd.cmd == "nav_relative") {
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_RELATIVE, cmd.paramI));
+            } else if (cmd.cmd == "activate") {
+                _intentQueue.push(UIIntent(UIAction::ACTIVATE));
+            } else if (cmd.cmd == "back") {
+                _intentQueue.push(UIIntent(UIAction::BACK));
+            } else if (cmd.cmd == "page_sync" && cmd.paramI >= 0) {
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_PATH, cmd.paramI));
+            } else {
+                // 业务指令 → CommandDispatcher
+                dispatcher.dispatch(cmd);
+            }
+        }
+    }
+
+    // ── 2. 终端设备 tick + 文本命令路由 ─────────────────────────────────────
+    for (int i = 0; i < termDeviceCount; i++) {
+        termDevices[i]->tick();
+        while (termDevices[i]->hasCommand()) {
+            String line = termDevices[i]->pollCommand();
+            if (line.length() == 0) continue;
+
+            // 简单导航命令直接转 UIIntent，其余走 dispatchText
+            if      (line == "ACTIVATE") _intentQueue.push(UIIntent(UIAction::ACTIVATE));
+            else if (line == "BACK")     _intentQueue.push(UIIntent(UIAction::BACK));
+            else if (line == "CANCEL")   _intentQueue.push(UIIntent(UIAction::CANCEL));
+            else if (line.startsWith("NAV:")) {
+                int delta = line.substring(4).toInt();
+                _intentQueue.push(UIIntent(UIAction::NAVIGATE_RELATIVE, delta));
+            } else {
+                dispatcher.dispatchText(line);
+            }
+        }
+    }
+
+    // ── 3. 旋钮设备 tick（旋钮由 getNextIntent() 消费，此处只 tick）─────────
+    for (int i = 0; i < knobDeviceCount; i++) {
+        knobDevices[i]->tick();
+    }
+}
+
+// ── getNextIntent：优先消费内部 UIIntent 队列，再轮询旋钮设备 ─────────────────
+// 覆盖现有实现（此处追加版，现有的会被编译器看到两份 —— 需替换现有实现）

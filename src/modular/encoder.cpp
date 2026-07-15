@@ -82,7 +82,7 @@ void Encoder::setPhaseCallback(void* context, PhaseCallback callback) {
 /**
  * A相中断处理函数
  */
-void Encoder::handleAPhaseInterrupt() {
+void IRAM_ATTR Encoder::handleAPhaseInterrupt() {
     Encoder* enc = getInstance();
     int A = digitalRead(PIN_ENCODER_A);
     if (A != enc->pinA_state) {
@@ -100,7 +100,7 @@ void Encoder::handleAPhaseInterrupt() {
 /**
  * B相中断处理函数
  */
-void Encoder::handleBPhaseInterrupt() {
+void IRAM_ATTR Encoder::handleBPhaseInterrupt() {
     Encoder* enc = getInstance();
     int B = digitalRead(PIN_ENCODER_B);
     if (B != enc->pinB_state) {
@@ -118,7 +118,7 @@ void Encoder::handleBPhaseInterrupt() {
 /**
  * Z相中断处理函数
  */
-void Encoder::handleZPhaseInterrupt() {
+void IRAM_ATTR Encoder::handleZPhaseInterrupt() {
     // if (!instance) return;
     Encoder* enc = getInstance();
     
@@ -126,12 +126,12 @@ void Encoder::handleZPhaseInterrupt() {
     enc->zeroCrossCount++;
     
     // 记录Z相触发时的原始计数值
-    enc->zeroCrossRawCount = enc->rawEncoderCount;
+    enc->zeroCrossRawCount.store(enc->rawEncoderCount.load());
     
     // 当清零时，如果计数器对400取模余数不是0，则强行设为0
     if (enc->rawEncoderCount % 400 != 0) {
         // 记录强制清零时的原始计数值
-        enc->forcedZeroRawCount = enc->rawEncoderCount;
+        enc->forcedZeroRawCount.store(enc->rawEncoderCount.load());
         // 增加强制清零计数
         enc->forcedZeroCount++;
         // 直接设为0
@@ -148,7 +148,7 @@ void Encoder::handleZPhaseInterrupt() {
  * 私有方法：触发相位回调
  * 避免代码重复，在A相、B相和Z相中断处理中被调用
  */
-void Encoder::triggerPhaseCallback() {
+void IRAM_ATTR Encoder::triggerPhaseCallback() {
     if (encoderPhaseCallback != nullptr) {
         int raw = rawEncoderCount % ENCODER_LOGICAL_POSITION_RANGE;
         if (raw < 0) raw += ENCODER_LOGICAL_POSITION_RANGE;

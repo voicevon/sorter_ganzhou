@@ -10,6 +10,15 @@ constexpr const char* SYSTEM_NAME = "ESP32 Sorter";
 constexpr const char* FIRMWARE_VERSION = "2.0.0";
 
 // ==========================================
+// HMI Configuration (Coexistence Mode)
+// ==========================================
+#define ENABLE_HMI_TERMINAL     0  // 0: OFF, 1: ON
+#define ENABLE_HMI_OLED_ROTARY  1  // 0: OFF, 1: ON (OLED Display + Rotary Knob)
+#define ENABLE_HMI_MCGS         0  // 0: OFF, 1: ON (MCGS Modbus Screen)
+#define ENABLE_HMI_RS485        1  // 0: OFF, 1: ON (Self-developed LVGL RS485 Screen)
+
+
+// ==========================================
 // Pin Definitions
 // ==========================================
 
@@ -26,12 +35,11 @@ constexpr int PIN_HMI_BTN   = 14;
 // Power Monitor (Voltage Divider Input)
 constexpr int PIN_POWER_MONITOR = 32;
 
-// Scanner (5 Points Array)
+// Scanner (4 Points Array)
 constexpr int PIN_SCANNER_1 = 36;
 constexpr int PIN_SCANNER_2 = 39;
 constexpr int PIN_SCANNER_3 = 34;
 constexpr int PIN_SCANNER_4 = 35;
-constexpr int PIN_SCANNER_5 = 15;
 
 // Main Encoder
 constexpr int PIN_ENCODER_A = 19;
@@ -46,9 +54,17 @@ constexpr int PIN_OLED_SCL = 22;
 constexpr int PIN_UART0_TX = 1;
 constexpr int PIN_UART0_RX = 3;
 
+// HMI RS-485 Serial (UART2) — 连接昆仑通态 TPC7062Ti 串口屏
+// MAX485: DI ← TX, RO → RX, DE/RE ← EN (HIGH=发送, LOW=接收)
+constexpr int PIN_HMI_485_TX        = 17;
+constexpr int PIN_HMI_485_RX        = 16;
+constexpr int PIN_HMI_485_EN        = 5;    // DE/RE 方向控制 (GPIO5, JTAG 已禁用)
+constexpr uint8_t  HMI_MODBUS_SLAVE_ID = 1;
+constexpr long     HMI_MODBUS_BAUD     = 9600;
 
-constexpr int PINS_SCANNER[5] = {
-    PIN_SCANNER_1, PIN_SCANNER_2, PIN_SCANNER_3, PIN_SCANNER_4, PIN_SCANNER_5
+
+constexpr int PINS_SCANNER[4] = {
+    PIN_SCANNER_1, PIN_SCANNER_2, PIN_SCANNER_3, PIN_SCANNER_4
 };
 
 // ==========================================

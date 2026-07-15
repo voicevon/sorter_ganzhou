@@ -1,5 +1,6 @@
 # ESP32 Sorter 项目
 
+
 这是一个基于ESP32开发的物料分拣系统，使用PlatformIO和Arduino框架开发。系统主要用于传输线上的物料分拣，通过直径数据对物料进行分类，并使用舵机控制的出口将物料分配到不同通道。
 
 ## 项目功能
@@ -19,7 +20,7 @@
 - **TraySystem**：管理所有托盘的状态和移动
 - **Encoder**：编码器类，提供位置跟踪和中断处理
 - **Outlet**：单个出口的控制
-- **SimpleHMI**：人机交互模块，处理按钮和LED
+- **RotaryInputSource**：人机交互模块，处理按钮和旋转编码器
 - **DiameterScanner**：直径扫描仪类，处理激光扫描数据
 
 ## 目录结构
@@ -43,8 +44,8 @@ d:\Firmware\esp32_sorter\
 │   ├── outlet.h           # 出口控制头文件
 │   ├── encoder.cpp        # 编码器实现
 │   ├── encoder.h          # 编码器头文件
-│   ├── simple_hmi.cpp     # 人机交互模块实现
-│   ├── simple_hmi.h       # 人机交互模块头文件
+│   ├── RotaryInputSource.cpp # 人机交互模块实现
+│   ├── RotaryInputSource.h # 人机交互模块头文件
 │   ├── diameter_scanner.cpp # 直径扫描仪实现
 │   ├── diameter_scanner.h   # 直径扫描仪头文件
 │   └── pins.h             # 引脚定义文件

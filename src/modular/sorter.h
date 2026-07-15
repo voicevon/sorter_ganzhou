@@ -7,7 +7,6 @@
 #include "shift_register_driver.h"
 #include "../config.h"
 #include "main.h"
-#include "user_interface/simple_hmi.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <atomic>
@@ -31,7 +30,6 @@ private:
     // 指针实例
     DiameterScanner* scanner;
     Encoder* encoder;
-    SimpleHMI* simpleHmi;
     TraySystem* trayManager;
 
 
@@ -44,8 +42,8 @@ private:
     
     // 速度计算相关变量
     unsigned long lastSpeedCheckTime;
-    long lastEncoderPosition;  // 上次编码器位置
-    float lastSpeed;  // 上一次计算的速度值，用于过滤短时间差的异常值
+    std::atomic<long> lastEncoderPosition;  // 上次编码器位置
+    std::atomic<float> lastSpeed;  // 上一次计算的速度值，用于过滤短时间差的异常值
     int lastObjectCount;  // 保留用于向后兼容
     
     // 私有方法
@@ -72,7 +70,7 @@ public:
     void run();
     
     // 采样回调函数（供编码器调用，参数为相位）
-    void onPhaseChange(int phase);
+    void IRAM_ATTR onPhaseChange(int phase);
 
 
     
@@ -85,7 +83,7 @@ public:
     // 获取显示数据方法已移除，改用专用方法
     
     // 静态回调函数，用于编码器相位变化
-    static void onEncoderPhaseChange(void* context, int phase);
+    static void IRAM_ATTR onEncoderPhaseChange(void* context, int phase);
     
     // 获取最新直径
     int getLatestDiameter();

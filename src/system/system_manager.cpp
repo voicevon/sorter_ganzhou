@@ -1,112 +1,120 @@
 #include "system_manager.h"
 #include "../config.h"
-#include "user_interface/user_interface.h"
 #include "modular/sorter.h"
-#include "handlers/scanner_diagnostic_handler.h"
-#include "handlers/outlet_diagnostic_handler.h"
-#include "handlers/encoder_diagnostic_handler.h"
-#include "handlers/config_handler.h"
-#include "handlers/hmi_diagnostic_handler.h"
-#include "handlers/base_diagnostic_handler.h"
+#include "apps/app_scanner_diag.h"
+#include "apps/app_outlet_diag.h"
+#include "apps/app_encoder_diag.h"
+#include "apps/app_config.h"
+#include "apps/app_hmi_diag.h"
+#include "apps/app_base.h"
+#include "apps/app_production.h"
+#include "apps/app_about.h"
 #include <EEPROM.h>
 
-// 全局变量定义
-SystemMode currentMode = MODE_NORMAL;
-SystemMode pendingMode = MODE_NORMAL;
-bool modeChangePending = false;
-unsigned long systemBootCount = 0;
-String firmwareVersion = "ver: 2601";
-BaseDiagnosticHandler* activeHandler = nullptr;
+// 前向声明
+String getAppTypeName(AppType appType);
 
 // 外部引用（由 main.cpp 或其他模块定义）
-extern MenuSystem menuSystem;
-extern bool menuModeActive;
+extern class AppProduction appProduction;
 extern Sorter sorter;
-extern DiameterConfigHandler diameterConfigHandler;
-extern PhaseOffsetConfigHandler phaseOffsetConfigHandler;
-extern ScannerDiagnosticHandler scannerDiagnosticHandler;
-extern OutletDiagnosticHandler outletDiagnosticHandler;
-extern EncoderDiagnosticHandler encoderDiagnosticHandler;
-extern HMIDiagnosticHandler hmiDiagnosticHandler;
+extern class AppConfigDiameter appConfigDiameter;
+extern class AppConfigPhaseOffset appConfigPhaseOffset;
+extern AppAbout appAbout;
 
-void switchToMode(SystemMode mode) {
-    pendingMode = mode;
-    modeChangePending = true;
-    menuModeActive = false;
+// 全局变量定义
+AppType currentAppType = APP_PRODUCTION;
+AppType pendingAppType = APP_PRODUCTION;
+bool appTypeChangePending = false;
+unsigned long systemBootCount = 0;
+String firmwareVersion = "ver: 2601";
+AppBase* activeApp = &appProduction;
+extern class AppScannerDiag appScannerDiag;
+extern class AppOutletDiag appOutletDiag;
+extern class AppEncoderDiag appEncoderDiag;
+extern class AppHmiDiag appHmiDiag;
+extern bool hasVersionInfoDisplayed;
+
+void switchToAppType(AppType appType) {
+    pendingAppType = appType;
+    appTypeChangePending = true;
 }
 
-void handleReturnToMenu() {
-    if (activeHandler) {
-        activeHandler->end();
-        activeHandler = nullptr;
-    }
-    menuModeActive = true;
-    UserInterface::getInstance()->resetDiagnosticMode();
-    
-    Serial.println("[MENU] Returned to Main Menu");
-    UserInterface::getInstance()->clearDisplay();
-    UserInterface::getInstance()->renderMenu(menuSystem.getCurrentNode(), menuSystem.getCursorIndex(), menuSystem.getScrollOffset());
-}
+void handleAppTypeChange() {
+    if (!appTypeChangePending) return;
 
-void handleModeChange() {
-    if (!modeChangePending) return;
-
-    if (currentMode == MODE_DIAGNOSE_SCANNER) {
-        UserInterface::getInstance()->resetDiagnosticMode();
+    if (currentAppType == APP_DIAG_SCANNER) {
         Serial.println("[DIAGNOSTIC] 已禁用扫描边缘校准模式");
     }
     
-    if (currentMode == MODE_CONFIG_DIAMETER) {
+    if (currentAppType == APP_CONFIG_DIAMETER) {
         sorter.saveConfig();
     }
     
-    SystemMode oldMode = currentMode;
-    currentMode = pendingMode;
-    modeChangePending = false;
+    AppType oldAppType = currentAppType;
+    currentAppType = pendingAppType;
+    appTypeChangePending = false;
     
-    // 重置并设置新的 activeHandler
-    if (activeHandler) activeHandler->end();
-    activeHandler = nullptr;
+    // 重置并设置新的 activeApp
+    if (activeApp) activeApp->end();
+    activeApp = nullptr;
 
-    switch (currentMode) {
-        case MODE_DIAGNOSE_ENCODER:
-            activeHandler = &encoderDiagnosticHandler;
+    switch (currentAppType) {
+        case APP_PRODUCTION:
+            activeApp = &appProduction;
             break;
-        case MODE_DIAGNOSE_SCANNER:
-            activeHandler = &scannerDiagnosticHandler;
+        case APP_DIAG_ENCODER:
+            activeApp = &appEncoderDiag;
             break;
-        case MODE_DIAGNOSE_OUTLET:
-            activeHandler = &outletDiagnosticHandler;
+        case APP_DIAG_SCANNER:
+            activeApp = &appScannerDiag;
             break;
-        case MODE_DIAGNOSE_HMI:
-            activeHandler = &hmiDiagnosticHandler;
+        case APP_DIAG_OUTLET:
+            activeApp = &appOutletDiag;
             break;
-        case MODE_CONFIG_DIAMETER:
-            activeHandler = &diameterConfigHandler;
+        case APP_DIAG_HMI:
+            activeApp = &appHmiDiag;
             break;
-        case MODE_CONFIG_PHASE_OFFSET:
-            activeHandler = &phaseOffsetConfigHandler;
+        case APP_CONFIG_DIAMETER:
+            activeApp = &appConfigDiameter;
+            break;
+        case APP_CONFIG_PHASE_OFFSET:
+            activeApp = &appConfigPhaseOffset;
+            break;
+        case APP_VERSION_INFO:
+            activeApp = &appAbout;
             break;
         default:
-            activeHandler = nullptr;
+            activeApp = nullptr;
             break;
     }
 
-    if (activeHandler) {
-        activeHandler->begin();
+    if (activeApp) {
+        activeApp->begin();
     }
     
-    if (oldMode == MODE_CONFIG_DIAMETER && currentMode != MODE_CONFIG_DIAMETER) {
-        diameterConfigHandler.reset();
+    if (oldAppType == APP_CONFIG_DIAMETER && currentAppType != APP_CONFIG_DIAMETER) {
+        appConfigDiameter.reset();
     }
-    if (oldMode == MODE_CONFIG_PHASE_OFFSET && currentMode != MODE_CONFIG_PHASE_OFFSET) {
-        phaseOffsetConfigHandler.reset();
+    if (oldAppType == APP_CONFIG_PHASE_OFFSET && currentAppType != APP_CONFIG_PHASE_OFFSET) {
+        appConfigPhaseOffset.reset();
     }
     
-    // 获取模式名称的逻辑移动到 mode_processors
-    extern String getSystemModeName(SystemMode mode);
-    Serial.print("[DIAGNOSTIC] Mode switched to: ");
-    Serial.println(getSystemModeName(currentMode));
+    Serial.print("[DIAGNOSTIC] App type switched to: ");
+    Serial.println(getAppTypeName(currentAppType));
+}
+
+String getAppTypeName(AppType appType) {
+    switch (appType) {
+        case APP_PRODUCTION: return "Normal Mode";
+        case APP_DIAG_ENCODER: return "Encoder Diag";
+        case APP_DIAG_SCANNER: return "Scanner Diag";
+        case APP_DIAG_OUTLET: return "Outlet Diag";
+        case APP_VERSION_INFO: return "Version Info";
+        case APP_CONFIG_DIAMETER: return "Config Diameter";
+        case APP_DIAG_HMI: return "HMI Encoder Diag";
+        case APP_CONFIG_PHASE_OFFSET: return "Config Phase Offset";
+        default: return "Unknown Mode";
+    }
 }
 
 void checkPowerLoss() {

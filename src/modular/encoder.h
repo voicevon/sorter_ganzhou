@@ -3,6 +3,7 @@
 
 #include "Arduino.h"
 #include "../config.h"
+#include <atomic>
 
 #include "../utils/singleton.h"
 
@@ -16,14 +17,14 @@ typedef void (*PhaseCallback)(void* context, int phase);
 class Encoder : public Singleton<Encoder> {
     friend class Singleton<Encoder>;
 private:
-    // 核心状态变量
-    long rawEncoderCount;            // 编码器计数值
-    long lastEncoderCount;           // 上次计数值，用于检测变化
-    long zeroCrossCount;            // Z相触发次数（清零次数）
-    long zeroCrossRawCount;         // Z相触发时的原始计数值
-    int forcedZeroCount;            // 强制清零次数
-    long forcedZeroRawCount;        // 强制清零时的原始计数值
-    int phaseOffset;                // 零位偏移量：补偿各机器编码器安装位置差异
+    // 核心状态变量 (ISR 修改的变量使用 std::atomic 保证原子性和跨核可见性)
+    std::atomic<long> rawEncoderCount;       // 编码器计数值 (ISR 写, Task 读)
+    long lastEncoderCount;                   // 上次计数值，用于检测变化 (仅 Task 使用)
+    std::atomic<long> zeroCrossCount;        // Z相触发次数 (ISR 写, Task 读)
+    std::atomic<long> zeroCrossRawCount;     // Z相触发时的原始计数值 (ISR 写, Task 读)
+    std::atomic<int> forcedZeroCount;        // 强制清零次数 (ISR 写, Task 读)
+    std::atomic<long> forcedZeroRawCount;    // 强制清零时的原始计数值 (ISR 写, Task 读)
+    int phaseOffset;                         // 零位偏移量：补偿各机器编码器安装位置差异
     
     // 引脚状态缓存（参考 SimpleFOC 优化）
     volatile int pinA_state;        // A相上一个状态
@@ -37,7 +38,7 @@ private:
     Encoder();
     
     // 触发相位回调的私有方法
-    void triggerPhaseCallback();
+    void IRAM_ATTR triggerPhaseCallback();
     
 public:
     // initialize方法移至public
@@ -73,9 +74,9 @@ public:
     long getForcedZeroRawCount() const { return forcedZeroRawCount; }
     
     // 中断处理函数
-    static void handleAPhaseInterrupt();  // A相中断
-    static void handleBPhaseInterrupt();  // B相中断
-    static void handleZPhaseInterrupt();  // Z相中断
+    static void IRAM_ATTR handleAPhaseInterrupt();  // A相中断
+    static void IRAM_ATTR handleBPhaseInterrupt();  // B相中断
+    static void IRAM_ATTR handleZPhaseInterrupt();  // Z相中断
 };
 
 #endif // ENCODER_H

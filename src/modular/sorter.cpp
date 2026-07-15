@@ -1,6 +1,5 @@
 #include "sorter.h"
 #include "HardwareSerial.h"
-#include "user_interface/oled.h"
 #include "../config.h"
 #include "tray_system.h"
 #include <Arduino.h>
@@ -23,7 +22,6 @@ Sorter::Sorter() :
 
     // 实例获取
     encoder = Encoder::getInstance();
-    simpleHmi = SimpleHMI::getInstance();
     trayManager = TraySystem::getInstance();
     scanner = DiameterScanner::getInstance(); // 初始化scanner指针，防止空指针异常
     
@@ -59,21 +57,26 @@ void Sorter::initialize() {
 
 void Sorter::restoreOutletConfig() {
     // 检查 EEPROM 是否已初始化
-    if (EEPROM.read(EEPROM_ADDR_DIAMETER) == 0xAA) {
-        Serial.println("[Sorter] Restoring configuration from EEPROM...");
+    uint8_t magic = EEPROM.read(EEPROM_ADDR_DIAMETER);
+    if (magic == 0xAA) {
+        Serial.printf("[Sorter] 检测到有效的 EEPROM 标识 (magic=0x%02X)，开始恢复配置...\n", magic);
         // 读取出口配置 (每个出口占 3 字节: Min, Max, Length)
         for (uint8_t i = 0; i < NUM_OUTLETS; i++) {
             int minD = EEPROM.read(EEPROM_ADDR_DIAMETER_DATA + i * 3);
             int maxD = EEPROM.read(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 1);
             int lenL = EEPROM.read(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 2);
             outlets[i].setMatchDiameter(minD, maxD);
-            outlets[i].setTargetLength(lenL > 3 ? 0 : lenL);
+            // 修正：掩码最大值为 7 (LEN_ALL)，若读取到非法值则默认为 LEN_ALL
+            uint8_t targetMask = lenL > 7 ? LEN_ALL : lenL;
+            outlets[i].setTargetLength(targetMask);
+            Serial.printf("[Sorter] 恢复出口 #%d -> Min=%d, Max=%d, Mask=%d\n", i + 1, minD, maxD, targetMask);
         }
         // 读取出口 0 模式
         outlet0Mode = EEPROM.read(EEPROM_ADDR_OUTLET0_MODE);
         if (outlet0Mode > 1) outlet0Mode = 0;
+        Serial.printf("[Sorter] 恢复出口 0 模式 -> %s (%d)\n", outlet0Mode == 0 ? "多物体检测" : "直径分拣", outlet0Mode);
     } else {
-        Serial.println("[Sorter] EEPROM empty, using default ranges.");
+        Serial.printf("[Sorter] EEPROM 标识为空或无效 (magic=0x%02X)，使用默认配置范围:\n", magic);
         // 默认直径范围
         int outletDiameterRanges[NUM_OUTLETS][2] = {
             {0, 0},     // 出口0：特殊处理
@@ -87,6 +90,8 @@ void Sorter::restoreOutletConfig() {
         };
         for (uint8_t i = 0; i < NUM_OUTLETS; i++) {
             outlets[i].setMatchDiameter(outletDiameterRanges[i][0], outletDiameterRanges[i][1]);
+            Serial.printf("[Sorter] 默认出口 #%d -> Min=%d, Max=%d, Mask=%d\n", 
+                          i + 1, outletDiameterRanges[i][0], outletDiameterRanges[i][1], outlets[i].getTargetLength());
         }
     }
 
@@ -109,7 +114,7 @@ void Sorter::initializeDivergencePoints(const uint8_t positions[NUM_OUTLETS]) {
     }
 }
 
-void Sorter::onPhaseChange(int phase) {
+void IRAM_ATTR Sorter::onPhaseChange(int phase) {
     // 1. 实时采样（必须在中断中完成）
     scanner->sample(phase); 
     
@@ -127,7 +132,7 @@ void Sorter::onPhaseChange(int phase) {
 }
 
 // 实现静态回调函数
-void Sorter::onEncoderPhaseChange(void* context, int phase) {
+void IRAM_ATTR Sorter::onEncoderPhaseChange(void* context, int phase) {
     Sorter* sorter = static_cast<Sorter*>(context);
     sorter->onPhaseChange(phase);
 }
@@ -197,6 +202,7 @@ void Sorter::run() {
 
 // 出口控制公共方法实现
 void Sorter::setOutletState(uint8_t outletIndex, bool open) {
+    if (outletIndex >= NUM_OUTLETS) return;
     outlets[outletIndex].setReadyToOpen(open);
     outlets[outletIndex].execute();
 }
@@ -275,12 +281,7 @@ int Sorter::getTransportedTrayCount() {
 
 // 获取传送带速度（托架/秒）- 返回float类型
 float Sorter::getConveyorSpeedPerSecond() {
-    float val = 0.0f;
-    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        val = lastSpeed;
-        xSemaphoreGive(mutex);
-    }
-    return val;
+    return lastSpeed.load(); // 原子读取，无需互斥锁保护
 }
 
 // 获取显示数据（用于 UserInterface）
@@ -373,14 +374,19 @@ void Sorter::updateShiftRegisters() {
     shiftDriver.write(chip2Byte, chip1Byte, ledByte);
 }
 void Sorter::saveConfig() {
-    Serial.println("[Sorter] Saving configuration to EEPROM...");
+    Serial.println("[Sorter] 开始保存配置到 EEPROM...");
     EEPROM.write(EEPROM_ADDR_DIAMETER, 0xAA);
     for (uint8_t i = 0; i < NUM_OUTLETS; i++) {
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3,     outlets[i].getMatchDiameterMin());
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 1, outlets[i].getMatchDiameterMax());
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 2, outlets[i].getTargetLength());
+        int minD = outlets[i].getMatchDiameterMin();
+        int maxD = outlets[i].getMatchDiameterMax();
+        uint8_t maskL = outlets[i].getTargetLength();
+        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3,     minD);
+        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 1, maxD);
+        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 2, maskL);
+        Serial.printf("[Sorter] 写入出口 #%d -> Min=%d, Max=%d, Mask=%d\n", i + 1, minD, maxD, maskL);
     }
     EEPROM.write(EEPROM_ADDR_OUTLET0_MODE, outlet0Mode);
+    Serial.printf("[Sorter] 写入出口 0 模式 -> %d\n", outlet0Mode);
     EEPROM.commit();
-    Serial.println("[Sorter] Configuration saved successfully.");
+    Serial.println("[Sorter] 配置已成功提交并保存到 EEPROM。");
 }

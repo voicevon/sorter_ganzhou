@@ -2,16 +2,23 @@
 #define USER_INTERFACE_H
 
 #include <Arduino.h>
-#include "user_interface/simple_hmi.h"
-#include "user_interface/display.h"  // 包含Display抽象基类
+#include <queue>
+#include "common/input_source.h"
+#include "common/display.h"
+#include "common/display_types.h"
+#include "paradigm/i_knob_device.h"
+#include "paradigm/i_touch_device.h"
+#include "paradigm/i_term_device.h"
+#include "command_dispatcher.h"
 
 // 前向声明，不需要包含具体实现的头文件
 class OLED;
 class Terminal;
+class MenuNode;
 // #include "display_data.h"已移除，不再需要
 
-// 系统工作模式前向声明
-enum SystemMode;
+// 应用程序类型前向声明
+enum AppType;
 
 // 输出渠道枚举
 enum OutputChannel {
@@ -28,7 +35,7 @@ enum Language {
 
 /**
  * @class UserInterface
- * @brief 用户界面管理类，合并 OLED 显示和 SimpleHMI 输入功能
+ * @brief 用户界面管理类，合并 OLED 显示和 RotaryInputSource 输入功能
  * 
  * 该类使用单例模式实现，负责管理所有用户交互功能
  * 包括 OLED 显示、按钮输入、LED 输出等
@@ -45,13 +52,32 @@ private:
     // 静态实例指针
     static UserInterface* instance;
     
-    // 内部组件
-    SimpleHMI* hmi;
+    // 内部组件已移除，改为由外部注入
     
-    // 显示设备数组
-    static const int MAX_DISPLAY_DEVICES = 4;  // 最大显示设备数量
-    Display* displayDevices[MAX_DISPLAY_DEVICES];  // 显示设备数组
-    int displayDeviceCount;  // 当前显示设备数量
+    // 输入设备数组（旧接口，保留向下兼容）
+    static const int MAX_INPUT_SOURCES = 4;
+    InputSource* inputSources[MAX_INPUT_SOURCES];
+    int inputSourceCount;
+    
+    // 显示设备数组（旧接口，保留向下兼容）
+    static const int MAX_DISPLAY_DEVICES = 4;
+    Display* displayDevices[MAX_DISPLAY_DEVICES];
+    int displayDeviceCount;
+
+    // ── 三范式子系统设备数组 ──────────────────────────────────────────────────
+    static const int MAX_KNOB_DEVICES  = 2;
+    static const int MAX_TOUCH_DEVICES = 4;
+    static const int MAX_TERM_DEVICES  = 2;
+
+    IKnobDevice*  knobDevices[MAX_KNOB_DEVICES];
+    ITouchDevice* touchDevices[MAX_TOUCH_DEVICES];
+    ITermDevice*  termDevices[MAX_TERM_DEVICES];
+    int knobDeviceCount  = 0;
+    int touchDeviceCount = 0;
+    int termDeviceCount  = 0;
+
+    // 内部意图队列（来自触摸/终端范式的导航指令）
+    std::queue<UIIntent> _intentQueue;
     
     // 输出控制
     uint8_t outputChannels;  // 输出渠道掩码
@@ -73,47 +99,44 @@ public:
   
   // 添加显示设备的静态方法（允许外部注入显示设备）
   static void addExternalDisplayDevice(Display* display);
+  
+  // 添加输入源的静态方法
+  static void addInputSource(InputSource* source);
     
-    // 显示相关方法 - updateDisplay已移除，改用功能专用方法
-    void displayModeChange(SystemMode newMode);
-    void displayOutletStatus(uint8_t outletIndex, bool isOpen);
-    void displayDiagnosticInfo(const String& title, const String& info);
-    
-    // 显示配置详情（带针对长度选择的反色显示）
-    void displayConfigEdit(const String& title, int maxV, int minV, uint8_t targetMode, int activeField);
+    // ── 新接口：三范式子系统设备注册 ──────────────────────────────────────────
+    void addKnobDevice(IKnobDevice* dev);   // 注册旋钮菜单设备
+    void addTouchDevice(ITouchDevice* dev); // 注册触摸直控设备
+    void addTermDevice(ITermDevice* dev);   // 注册终端设备
 
-    // 显示出口测试模式图形
-    void displayOutletTestGraphic(uint8_t outletCount, uint8_t selectedOutlet, bool isOpen, int subMode);
-    
-    // 专门用于寿命测试的显示方法 (更名以避免重载歧义)
-    void displayOutletLifetimeGraphic(uint8_t outletCount, uint32_t cycleCount, bool outletState, int subMode);
-    void displayScannerEncoderValues(const int* risingValues, const int* fallingValues);
-    
-    // 显示系统仪表盘
-    void displayDashboard(float sortingSpeedPerSecond, int sortingSpeedPerMinute, int sortingSpeedPerHour, int identifiedCount, int transportedTrayCount, int latestDiameter, int latestScanCount, int latestLengthLevel = 0, bool forceRefresh = false);
-    void displayNormalModeDiameter(int latestDiameter, bool forceRefresh = false);
+    /**
+     * @brief 广播快照到所有子系统（旧 Display + 新三范式设备）
+     * 替代 refreshAllDevices()，统一广播入口。
+     */
+    void broadcastSnapshot(const DisplaySnapshot& snapshot);
+
+    /**
+     * @brief 轮询并调度所有触摸/终端设备的待处理指令
+     * 在 vUITask 主循环中调用（每帧一次）。
+     * - 导航类 RichCommand（nav_relative/activate/back）→ 推入内部 UIIntent 队列
+     * - 其他 RichCommand → CommandDispatcher
+     * - 终端文本命令 → CommandDispatcher::dispatchText()
+     */
+    void dispatchPendingCommands();
+
+    // 核心快照刷新接口（旧接口，保留兼容）
+    void refreshAllDevices(const DisplaySnapshot& snapshot);
     
     // 统一菜单显示代理
     void renderMenu(MenuNode* node, int cursorIndex, int scrollOffset);
     
-    // 通用显示方法（替代旧的updateDisplay）
-  void displaySpeedStats(int speedPerSecond, int speedPerMinute, int speedPerHour, int itemCount, int trayCount);
-  void displayDiameter(int latestDiameter, bool forceRefresh = false);
-  void displaySingleValue(const String& label, int value, const String& unit);
-  void displayPositionInfo(const String& title, int position, bool showOnlyOnChange);
-  void displayDiagnosticValues(const String& title, const String& value1, const String& value2);
-  void displayMultiLineText(const String& title, const String& line1, const String& line2, const String& line3 = "", const String& line4 = "", const String& line5 = "");
-  
+    void clearDisplay(); // 新增：清理所有显示设备的屏幕
+    bool isDisplayAvailable() const; // 新增：检查显示器是否可用
 
     
-    // 更新的模式变化显示方法
-    void displayModeChange(const String& newModeName);
+    // 意图驱动的输入方法
+    UIIntent getNextIntent();
     
-    void resetDiagnosticMode();
-    bool isDisplayAvailable() const;
-    void clearDisplay(); // 新增：清理所有显示设备的屏幕
-    
-    // 输入相关方法
+    // 输入相关方法 (旧接口，兼容物理旋钮)
     // 获取编码器逻辑旋转增量 (通常带分频)
     int getEncoderDelta();
     
@@ -126,6 +149,7 @@ public:
     bool addDisplayDevice(Display* display);  // 添加显示设备
     bool removeDisplayDevice(Display* display);  // 移除显示设备
     void clearAllDisplayDevices();  // 清除所有显示设备
+    void clearAllInputSources();    // 清除所有输入源
     
     // 输出控制方法
     void enableOutputChannel(OutputChannel channel);  // 启用指定输出渠道
