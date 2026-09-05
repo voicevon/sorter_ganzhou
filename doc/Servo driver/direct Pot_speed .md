@@ -9,18 +9,37 @@ CN1 引脚定义 (Page 17)
         PIN-25  AGnd，（不是0V?  不是Gnd?  不是PE?）
 
 
-模式，使能，方向
-PA-4=1,       速度模式 
-PA-53=1，     上电使能
-PA-44=1,      【模拟量速度指令方向取反】电机正向转
+复位到出厂状态
+    PA-0     from 315 to 385 
+    PA-1     from 60/80   to 'dEF',  长按'set'
+    断电重启
+
+
+
+
+模式，使能，定义方向
+    PA-4=1,       速度控制模式 
+    PA-53=1，     上电即使能
+    PA-44=1,      【模拟量速度指令方向取反】电机正向转
 
 速度上限
-PA-43=120,   限速 单位是 rpm per volt,  120 => 330 RPM
-    PA-28,   到达速度
+    PA-43=120,      （无方向）限速 单位是 rpm per volt,  
+                v=120 接近等价于 330 RPM
+    PA-28,   到达速度？
 
 零漂相关
-   A-A0   ->  A-SPd -> StArt  -(长按 set)->  DonE
+    当前速度设置为"零速度"。
+        A-A0   ->  A-SPd -> StArt  -(长按 set)->  DonE
+        但是，本设置后，不能放置新的漂移，需要进行"零漂钳位"
 
+    零漂钳位
+    P3-2        from 3 to 7       Save(长按set)
+    PA-55       to  0100          Save(长按set)
+    PA-75       from 10 to 5      Save(长按set)
+
+
+
+    硬件设置转动方向。
     PIN3   反转禁止   接到 Pin-43   【page50】
     PIN19  正转禁止   接到 Pin-43   【page50】
     PA-20=0,        上面的设置有效
@@ -38,12 +57,7 @@ https://www.douyin.com/search/%E6%99%AE%E8%8F%B2%E5%BE%B7ps100%E4%BC%BA%E6%9C%8D
 A-A0      A-spd     StArt   donE
 断电重启
 
-零漂钳位
-P3-2        from 3 to 7       Save(长按set)
-PA-55       to  0100          Save(长按set)
-PA-75       from 10 to 5      Save(长按set)
 
-断电重启。
 
 
 
