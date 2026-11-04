@@ -1,5 +1,6 @@
 #include "rs485_touch_device.h"
 #include "../../config.h"
+#include "../../main.h"
 
 // ── 单例 ─────────────────────────────────────────────────────────────────────
 
@@ -16,7 +17,7 @@ Rs485TouchDevice::Rs485TouchDevice()
 
 void Rs485TouchDevice::initialize() {
     Serial.println("[Rs485TouchDevice] >> Initializing RS485 HMI Touch Screen driver...");
-    Serial.printf("[Rs485TouchDevice] Pin Config -> RX: %d, TX: %d, EN: %d, Baud: %d\n",
+    Serial.printf("[Rs485TouchDevice] Pin Config -> RX: %d, TX: %d, EN: %d, Baud: %ld\n",
                   PIN_HMI_485_RX, PIN_HMI_485_TX, PIN_HMI_485_EN, HMI_MODBUS_BAUD);
 
     pinMode(PIN_HMI_485_EN, OUTPUT);
@@ -59,7 +60,7 @@ void Rs485TouchDevice::sendPayload(const String& jsonStr) {
     _rxBuffer = "";
 }
 
-// ── pushSnapshot（主控 → 对端，与旧版 refresh() 逻辑完全一致）─────────────────
+// ── pushSnapshot（主控 → 对端）────────────────────────────────────────────────
 
 void Rs485TouchDevice::pushSnapshot(const DisplaySnapshot& snapshot) {
     String jsonStr;
@@ -227,13 +228,12 @@ void Rs485TouchDevice::processLine(const String& line) {
             cmd.cmd      = "page_sync";
             cmd.strParam = newPage;
 
-            // 同时填充 paramI 便于 Handler 直接用整数切换 AppType
-            if      (newPage == "dashboard")     cmd.paramI = 0; // APP_PRODUCTION
-            else if (newPage == "diag_encoder")  cmd.paramI = 1; // APP_DIAG_ENCODER
-            else if (newPage == "diag_laser")    cmd.paramI = 2; // APP_DIAG_SCANNER
-            else if (newPage == "diag_outlets")  cmd.paramI = 3; // APP_DIAG_OUTLET
-            else if (newPage == "config_outlets")cmd.paramI = 4; // APP_CONFIG_DIAMETER
-            else if (newPage == "about")         cmd.paramI = 5; // APP_VERSION_INFO
+            if      (newPage == "dashboard")      cmd.paramI = 0; // APP_PRODUCTION
+            else if (newPage == "diag_encoder")   cmd.paramI = 1; // APP_DIAG_ENCODER
+            else if (newPage == "diag_laser")     cmd.paramI = 2; // APP_DIAG_SCANNER
+            else if (newPage == "diag_outlets")   cmd.paramI = 3; // APP_DIAG_OUTLET
+            else if (newPage == "config_outlets") cmd.paramI = 4; // APP_CONFIG_DIAMETER
+            else if (newPage == "about")          cmd.paramI = 5; // APP_VERSION_INFO
             else cmd.paramI = -1; // 未知页面，Handler 自行处理
 
             _cmdQueue.push(cmd);
@@ -245,6 +245,7 @@ void Rs485TouchDevice::processLine(const String& line) {
     // ── 2. 事件列表 ──────────────────────────────────────────────────────────
     if (doc.containsKey("events")) {
         JsonArray events = doc["events"];
+        bool needSaveConfig = false;
         for (JsonObject ev : events) {
             String evCmd = ev["cmd"] | "";
             if (evCmd.length() == 0) continue;
@@ -268,6 +269,7 @@ void Rs485TouchDevice::processLine(const String& line) {
                 cmd.paramF  = ev["min"]  | 0.0f;
                 cmd.paramF2 = ev["max"]  | 0.0f;
                 cmd.paramI  = ev["mask"] | 0;
+                needSaveConfig = true;
 
             } else if (evCmd == "set_offset") {
                 // 兼容 "state" 和 "params" 两种字段名
@@ -281,6 +283,13 @@ void Rs485TouchDevice::processLine(const String& line) {
             _cmdQueue.push(cmd);
             Serial.printf("[Rs485TouchDevice] Event -> cmd='%s', index=%d\n",
                           cmd.cmd.c_str(), cmd.index);
+        }
+
+        // 批量 set_outlet 完成后统一触发一次持久化保存
+        if (needSaveConfig) {
+            RichCommand saveCmd;
+            saveCmd.cmd = "save_config";
+            _cmdQueue.push(saveCmd);
         }
     }
 }

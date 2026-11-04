@@ -25,29 +25,9 @@ void AppEncoderDiag::initialize(UserInterface* ui) {
 }
 
 void AppEncoderDiag::update(uint32_t currentMs, bool btnPressed) {
-    if (btnPressed) {
-        if (currentSubMode == 2) {
-            handleReturnToMenu();
-            return;
-        }
-        switchToNextSubMode();
-        return;
-    }
-
+    (void)btnPressed;
     if (currentMs - lastUIDisplayTime >= UI_REFRESH_INTERVAL) {
         lastUIDisplayTime = currentMs;
-        
-        long rawCount = encoder->getRawCount();
-        long totalZ = encoder->getZeroCrossCount();
-        int errorZ = encoder->getForcedZeroCount();
-        long lastZRaw = encoder->getZeroCrossRawCount();
-        int correctZ = totalZ - errorZ;
-        
-        int logicalPos = encoder->getCurrentPosition();
-        
-        // OLED显示已由 snapshot 统一托管
-        (void)rawCount; (void)totalZ; (void)errorZ; (void)lastZRaw; (void)correctZ; (void)logicalPos;
-
     }
 }
 
@@ -68,4 +48,3 @@ void AppEncoderDiag::captureSnapshot(DisplaySnapshot& snapshot) {
     snapshot.data.encoder.zeroTotal = encoder->getForcedZeroCount(); // errorZ
     snapshot.data.encoder.offset = encoder->getPhaseOffset();
 }
-

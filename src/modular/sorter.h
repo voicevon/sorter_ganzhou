@@ -94,11 +94,13 @@ public:
     // 获取传送带速度（托架/秒，返回float类型）
     float getConveyorSpeedPerSecond();
     
-    // 获取和设置出口直径范围的方法
+    // 获取和设置出口直径范围与长度掩码的方法
     int getOutletMinDiameter(uint8_t outletIndex);
     int getOutletMaxDiameter(uint8_t outletIndex);
+    uint8_t getOutletTargetLength(uint8_t outletIndex);
     void setOutletMinDiameter(uint8_t outletIndex, int minDiameter);
     void setOutletMaxDiameter(uint8_t outletIndex, int maxDiameter);
+    void setOutletTargetLength(uint8_t outletIndex, uint8_t targetLength);
     
     // 出口 0 模式控制 (0: 多物检测, 1: 直径分级)
     uint8_t getOutlet0Mode() { return outlet0Mode; }

@@ -11,22 +11,29 @@ void BleTouchDevice::initialize() {
     Serial.println("[BleTouchDevice] Ready. Waiting for BLE connection...");
 }
 
-// ── tick（目前 BLE 采用回调模式，tick 无需额外轮询）────────────────────────
+// ── tick ──────────────────────────────────────────────────────────────────────
 
 void BleTouchDevice::tick() {
-    // BleManager 的 COMMAND 回调是在 BLE 任务上下文中异步触发的。
-    // parseJson() 已在回调中直接将 RichCommand 放入 _cmdQueue。
-    // 若未来需要在 UI 任务上下文中处理，可将 JSON 先缓存到线程安全队列，此处消费。
-    // 当前版本：直接依赖 Arduino BLE 栈的单线程回调，ESP32 BLE 回调在 BT 任务，
-    // std::queue 操作在同一核可接受（无并发竞争）。
+    // JSON 解析由 BLE 回调触发，通过 _queueMux 自旋锁保证跨任务队列安全
 }
 
-// ── pollCommand ───────────────────────────────────────────────────────────────
+// ── hasCommand / pollCommand ──────────────────────────────────────────────────
+
+bool BleTouchDevice::hasCommand() {
+    portENTER_CRITICAL(&_queueMux);
+    bool nonEmpty = !_cmdQueue.empty();
+    portEXIT_CRITICAL(&_queueMux);
+    return nonEmpty;
+}
 
 RichCommand BleTouchDevice::pollCommand() {
-    if (_cmdQueue.empty()) return RichCommand{};
-    RichCommand cmd = _cmdQueue.front();
-    _cmdQueue.pop();
+    RichCommand cmd{};
+    portENTER_CRITICAL(&_queueMux);
+    if (!_cmdQueue.empty()) {
+        cmd = _cmdQueue.front();
+        _cmdQueue.pop();
+    }
+    portEXIT_CRITICAL(&_queueMux);
     return cmd;
 }
 
@@ -66,8 +73,6 @@ bool BleTouchDevice::serializeSnapshot(const DisplaySnapshot& snap,
     switch (snap.currentMode) {
         case APP_PRODUCTION: {
             pageId = BLE_PAGE_DASHBOARD;
-            // speed×100(u32) | speed/min(u16) | identified(u16) |
-            // trays(u16) | diameter×100(i16) | scan_count(u8)  = 13B
             uint32_t spd100 = (uint32_t)(snap.data.dashboard.sortingSpeedPerSecond * 100.0f);
             uint16_t spdMin = (uint16_t)snap.data.dashboard.sortingSpeedPerMinute;
             uint16_t ident  = (uint16_t)snap.data.dashboard.identifiedCount;
@@ -88,8 +93,6 @@ bool BleTouchDevice::serializeSnapshot(const DisplaySnapshot& snap,
         case APP_DIAG_HMI:
         case APP_CONFIG_PHASE_OFFSET: {
             pageId = BLE_PAGE_ENC_DIAG;
-            // raw(i16) corrected(i16) logic(i16) zeroCount(i16)
-            // zeroCorrect(i16) zeroTotal(i16) offset(i16) = 14B
             int16_t vals[7] = {
                 (int16_t)snap.data.encoder.raw,
                 (int16_t)snap.data.encoder.corrected,
@@ -113,7 +116,6 @@ bool BleTouchDevice::serializeSnapshot(const DisplaySnapshot& snap,
         case APP_DIAG_OUTLET:
         case APP_CONFIG_DIAMETER: {
             pageId = BLE_PAGE_OUTLET_DIAG;
-            // active_outlet(u8) sub_mode(u8) cycle_count(u32) = 6B
             payload[0] = (uint8_t)snap.data.outlet.activeOutletIndex;
             payload[1] = (uint8_t)snap.data.outlet.subMode;
             uint32_t cycles = snap.data.outlet.cycleCount;
@@ -129,7 +131,6 @@ bool BleTouchDevice::serializeSnapshot(const DisplaySnapshot& snap,
     buf[0] = 0xA5;
     buf[1] = pageId;
     buf[2] = payloadLen;
-    // checksum = XOR(buf[0..2]) XOR XOR(payload)
     uint8_t cs = buf[0] ^ buf[1] ^ buf[2];
     for (int i = 0; i < payloadLen; i++) cs ^= payload[i];
     buf[3] = cs;
@@ -167,12 +168,15 @@ void BleTouchDevice::parseJson(const String& json) {
         else if (page == "config_outlets") cmd.paramI = 4;
         else if (page == "about")          cmd.paramI = 5;
         else cmd.paramI = -1;
+        portENTER_CRITICAL(&_queueMux);
         _cmdQueue.push(cmd);
+        portEXIT_CRITICAL(&_queueMux);
     }
 
     // ── 2. 事件列表（与 Rs485TouchDevice::processLine 完全对称）──────────────
     if (doc.containsKey("events")) {
         JsonArray events = doc["events"];
+        bool needSaveConfig = false;
         for (JsonObject ev : events) {
             String evCmd = ev["cmd"] | "";
             if (evCmd.length() == 0) continue;
@@ -193,13 +197,24 @@ void BleTouchDevice::parseJson(const String& json) {
                 cmd.paramF  = ev["min"]   | 0.0f;
                 cmd.paramF2 = ev["max"]   | 0.0f;
                 cmd.paramI  = ev["mask"]  | 0;
+                needSaveConfig = true;
             } else if (evCmd == "set_offset") {
                 cmd.paramI = ev.containsKey("state")
                            ? (int)ev["state"] : (int)ev["params"];
             } else {
                 cmd.paramI = ev["params"] | 0;
             }
+            portENTER_CRITICAL(&_queueMux);
             _cmdQueue.push(cmd);
+            portEXIT_CRITICAL(&_queueMux);
+        }
+
+        if (needSaveConfig) {
+            RichCommand saveCmd;
+            saveCmd.cmd = "save_config";
+            portENTER_CRITICAL(&_queueMux);
+            _cmdQueue.push(saveCmd);
+            portEXIT_CRITICAL(&_queueMux);
         }
     }
 }

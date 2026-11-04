@@ -1,5 +1,4 @@
 #include "app_scanner_diag.h"
-#include "../user_interface/drv_oled_rotary/oled.h"
 #include "../user_interface/common/display_types.h"
 
 
@@ -27,13 +26,10 @@ AppScannerDiag::AppScannerDiag() :
         risingEdgeCounts[i] = 0; // 初始化上升沿计数器为0
     }
     
-    // 初始化上一次IO状态为一个不可能的值，确保首次执行时会输出
     lastIOStatus = "";
 }
 
 void AppScannerDiag::displayRawDiameters() {
-    // 串口输出 - 窗口式显示
-    // 检查是否是第一次显示（通过 lastRawDiameters 是否全是 -1 判断，或者直接通过标题打印）
     bool isFirst = true;
     for (int i = 0; i < 4; i++) {
         if (lastRawDiameters[i] != -1) {
@@ -46,12 +42,11 @@ void AppScannerDiag::displayRawDiameters() {
         Serial.println("\n\033[44m\033[31m      === Raw Diameter Values ===      \033[0m");
         Serial.println("\033[44m\033[37m                                      \033[0m");
     } else {
-        Serial.print("\033[6A"); // 向上移动6行到标题行
+        Serial.print("\033[6A");
         Serial.println("\033[44m\033[31m      === Raw Diameter Values ===      \033[0m");
         Serial.println("\033[44m\033[37m                                      \033[0m");
     }
 
-    // 更新扫描仪数据行并更新 lastRawDiameters
     for (int i = 0; i < 4; i++) {
         int count = scanner->getHighLevelPulseCount(i);
         float weight = scanner->getSensorWeight(i);
@@ -64,28 +59,20 @@ void AppScannerDiag::displayRawDiameters() {
         }
         Serial.println("\033[44m\033[37m" + line + "\033[0m");
     }
-    
-    // OLED显示已由 snapshot 统一托管
-
 }
 
 void AppScannerDiag::handleIOStatusCheck() {
-    // 子模式0：IO状态检查
-    // 调用底层DiameterScanner实例获取IO状态数组
     bool* ioStates = scanner->getIOStatusArray();
     
-    // 检测上升沿并更新计数器
     bool stateChanged = false;
     for (int i = 0; i < 4; i++) {
         if (ioStates[i] && !lastSensorStates[i]) {
-            // 检测到上升沿
             risingEdgeCounts[i]++;
             stateChanged = true;
         }
         lastSensorStates[i] = ioStates[i];
     }
     
-    // 生成状态字符串（无分割符，L->LO，H->HI）
     String statusLine = "IO: ";
     for (int i = 0; i < 4; i++) {
         statusLine += String(ioStates[i] ? "HI" : "LO");
@@ -94,7 +81,6 @@ void AppScannerDiag::handleIOStatusCheck() {
         }
     }
     
-    // 生成计数器字符串（每个三位数字）
     String countLine = "CNT:";
     for (int i = 0; i < 4; i++) {
         String countStr = String(risingEdgeCounts[i]);
@@ -105,95 +91,60 @@ void AppScannerDiag::handleIOStatusCheck() {
         }
     }
     
-    // 组合状态字符串，用于检测变化
     String combinedStatus = statusLine + " | " + countLine;
     
-    // 只有当状态发生变化时才输出
     if (combinedStatus != lastIOStatus || stateChanged) {
-        // 串口输出 - 窗口式显示
-        // 第一次切换到该子模式时，打印标题
         if (lastIOStatus == "") {
             Serial.println("\n\033[44m\033[31m        === Scanner IO Status ===        \033[0m");
             Serial.println("\033[44m\033[37m" + statusLine + "                      \033[0m");
             Serial.println("\033[44m\033[37m" + countLine + "                      \033[0m");
         } else {
-            // 使用回到行首的方式更新三行数据
-            Serial.print("\033[3A"); // 向上移动3行到标题行
+            Serial.print("\033[3A");
             Serial.println("\033[44m\033[31m        === Scanner IO Status ===        \033[0m");
             Serial.println("\033[44m\033[37m" + statusLine + "                      \033[0m");
             Serial.println("\033[44m\033[37m" + countLine + "                      \033[0m");
         }
-        
-        // OLED显示已由 snapshot 统一托管
-
-        
-        // 更新上一次状态
         lastIOStatus = combinedStatus;
     }
 }
 
 void AppScannerDiag::handleEncoderValues() {
-    // 子模式1：记录并显示传感器上升沿和下降沿的编码器值
     bool* currentStates = scanner->getIOStatusArray();
-    
-    // 检测上升沿和下降沿，并跟踪是否有变化
     bool hasEdgeChanged = false;
-    bool hasFallingEdge = false;
     
     for (int i = 0; i < 4; i++) {
         if (currentStates[i] && !lastSensorStates[i]) {
-            // 上升沿
             risingEdges[i] = true;
-            // 获取编码器原始计数值并对200取模
             risingEdgeEncoderValues[i] = encoder->getRawCount() % 200;
-            // 确保结果为正数
             if (risingEdgeEncoderValues[i] < 0) {
                 risingEdgeEncoderValues[i] += 200;
             }
-            
-            // 更新最小上升沿值
             if (risingEdgeEncoderValues[i] < minRisingEdgeValues[i]) {
                 minRisingEdgeValues[i] = risingEdgeEncoderValues[i];
             }
-            
             hasEdgeChanged = true;
         } else if (!currentStates[i] && lastSensorStates[i]) {
-            // 下降沿
             fallingEdges[i] = true;
-            // 获取编码器原始计数值并对200取模
             fallingEdgeEncoderValues[i] = encoder->getRawCount() % 200;
-            // 确保结果为正数
             if (fallingEdgeEncoderValues[i] < 0) {
                 fallingEdgeEncoderValues[i] += 200;
             }
-            
-            // 更新最大下降沿值
             if (fallingEdgeEncoderValues[i] > maxFallingEdgeValues[i]) {
                 maxFallingEdgeValues[i] = fallingEdgeEncoderValues[i];
             }
-            
-            // 计算并更新直径差值
             int diff = fallingEdgeEncoderValues[i] - risingEdgeEncoderValues[i];
             if (diff < 0) {
                 diff += 200;
             }
             diameterDifferences[i] = diff;
             hasCalculatedDifferences = true;
-            
             hasEdgeChanged = true;
-            hasFallingEdge = true;
         }
         lastSensorStates[i] = currentStates[i];
     }
     
-    // 只有在有上升沿或下降沿变化时才更新显示
     if (hasEdgeChanged) {
-        // 生成显示内容
-        String encoderInfo = "Encoder Values";
-        
-        // 串口输出 - 窗口式显示
         if (isFirstRun) {
-            // 第一次显示时，打印六行格式（蓝色背景，红色标题，白色正文）
             Serial.println("\n\033[44m\033[31m    === Encoder Value Recording ===    \033[0m");
             Serial.println("\033[44m\033[37m  Min Rising:      0   0   0   0      \033[0m");
             Serial.println("\033[44m\033[37m  Current Rising:  0   0   0   0      \033[0m");
@@ -202,74 +153,51 @@ void AppScannerDiag::handleEncoderValues() {
             Serial.println("\033[44m\033[37m  Differences:     0   0   0   0      \033[0m");
             isFirstRun = false;
         } else {
-            // 使用回到行首的方式更新六行数据
-            Serial.print("\033[6A"); // 向上移动6行到标题行
-            
-            // 重新打印标题行（蓝色背景，红色标题）
+            Serial.print("\033[6A");
             Serial.print("\033[44m\033[31m    === Encoder Value Recording ===    \033[0m"); Serial.println();
             
-            // 更新最小上升沿值行（蓝色背景，白色正文）
             Serial.print("\033[44m\033[37m  Min Rising:");
             for (int i = 0; i < 4; i++) {
                 Serial.print(" ");
-                if (minRisingEdgeValues[i] < 10) {
-                    Serial.print("  "); // 两个前导空格
-                } else if (minRisingEdgeValues[i] < 100) {
-                    Serial.print(" ");  // 一个前导空格
-                }
+                if (minRisingEdgeValues[i] < 10) Serial.print("  ");
+                else if (minRisingEdgeValues[i] < 100) Serial.print(" ");
                 Serial.print(minRisingEdgeValues[i]);
             }
             Serial.println("      \033[0m");
             
-            // 更新当前上升沿值行（蓝色背景，白色正文）
             Serial.print("\033[44m\033[37m  Current Rising:");
             for (int i = 0; i < 4; i++) {
                 Serial.print(" ");
-                if (risingEdgeEncoderValues[i] < 10) {
-                    Serial.print("  "); // 两个前导空格
-                } else if (risingEdgeEncoderValues[i] < 100) {
-                    Serial.print(" ");  // 一个前导空格
-                }
+                if (risingEdgeEncoderValues[i] < 10) Serial.print("  ");
+                else if (risingEdgeEncoderValues[i] < 100) Serial.print(" ");
                 Serial.print(risingEdgeEncoderValues[i]);
             }
             Serial.println("      \033[0m");
             
-            // 更新当前下降沿值行（蓝色背景，白色正文）
             Serial.print("\033[44m\033[37m  Current Falling:");
             for (int i = 0; i < 4; i++) {
                 Serial.print(" ");
-                if (fallingEdgeEncoderValues[i] < 10) {
-                    Serial.print("  "); // 两个前导空格
-                } else if (fallingEdgeEncoderValues[i] < 100) {
-                    Serial.print(" ");  // 一个前导空格
-                }
+                if (fallingEdgeEncoderValues[i] < 10) Serial.print("  ");
+                else if (fallingEdgeEncoderValues[i] < 100) Serial.print(" ");
                 Serial.print(fallingEdgeEncoderValues[i]);
             }
             Serial.println("      \033[0m");
             
-            // 更新最大下降沿值行（蓝色背景，白色正文）
             Serial.print("\033[44m\033[37m  Max Falling:");
             for (int i = 0; i < 4; i++) {
                 Serial.print(" ");
-                if (maxFallingEdgeValues[i] < 10) {
-                    Serial.print("  "); // 两个前导空格
-                } else if (maxFallingEdgeValues[i] < 100) {
-                    Serial.print(" ");  // 一个前导空格
-                }
+                if (maxFallingEdgeValues[i] < 10) Serial.print("  ");
+                else if (maxFallingEdgeValues[i] < 100) Serial.print(" ");
                 Serial.print(maxFallingEdgeValues[i]);
             }
             Serial.println("      \033[0m");
             
-            // 更新差值行（蓝色背景，白色正文）
             if (hasCalculatedDifferences) {
                 Serial.print("\033[44m\033[37m  Differences:");
                 for (int i = 0; i < 4; i++) {
                     Serial.print(" ");
-                    if (diameterDifferences[i] < 10) {
-                        Serial.print("  "); // 两个前导空格
-                    } else if (diameterDifferences[i] < 100) {
-                        Serial.print(" ");  // 一个前导空格
-                    }
+                    if (diameterDifferences[i] < 10) Serial.print("  ");
+                    else if (diameterDifferences[i] < 100) Serial.print(" ");
                     Serial.print(diameterDifferences[i]);
                 }
                 Serial.println("      \033[0m");
@@ -277,49 +205,13 @@ void AppScannerDiag::handleEncoderValues() {
                 Serial.println("\033[44m\033[37m  Differences:     0   0   0   0      \033[0m");
             }
         }
-        
-        // OLED显示 - 格式化显示
-        // OLED* oled = OLED::getInstance();
-        // if (oled->isAvailable()) {
-            // 构建紧凑的显示内容
-            String line1 = "Min R:";
-            String line2 = "Cur R:";
-            String line3 = "Cur F:";
-            String line4 = "Max F:";
-            
-            for (int i = 0; i < 4; i++) {
-                // 格式化最小上升沿值（占2个字符）
-                String minRisingStr = String(minRisingEdgeValues[i]);
-                while (minRisingStr.length() < 2) minRisingStr = " " + minRisingStr;
-                line1 += minRisingStr + " ";
-                
-                // 格式化当前上升沿值（占2个字符）
-                String currRisingStr = String(risingEdgeEncoderValues[i]);
-                while (currRisingStr.length() < 2) currRisingStr = " " + currRisingStr;
-                line2 += currRisingStr + " ";
-                
-                // 格式化当前下降沿值（占2个字符）
-                String currFallingStr = String(fallingEdgeEncoderValues[i]);
-                while (currFallingStr.length() < 2) currFallingStr = " " + currFallingStr;
-                line3 += currFallingStr + " ";
-                
-                // 格式化最大下降沿值（占2个字符）
-                String maxFallingStr = String(maxFallingEdgeValues[i]);
-                while (maxFallingStr.length() < 2) maxFallingStr = " " + maxFallingStr;
-                line4 += maxFallingStr + " ";
-            }
-            
-            // OLED显示已由 snapshot 统一托管
-        // }
     }
 }
 
 void AppScannerDiag::handleRawDiameterDisplay() {
-    // 子模式2：显示原始直径
     bool diametersChanged = false;
     int currentDiameters[4];
     
-    // 检查直径值是否变化
     for (int i = 0; i < 4; i++) {
         currentDiameters[i] = scanner->getHighLevelPulseCount(i);
         if (currentDiameters[i] != lastRawDiameters[i]) {
@@ -328,24 +220,20 @@ void AppScannerDiag::handleRawDiameterDisplay() {
         }
     }
     
-    // 只有当直径值变化时才输出
     if (diametersChanged) {
         displayRawDiameters();
     }
 }
 
 void AppScannerDiag::handleWaveformDisplay() {
-    // 总是实时刷新波形
-    // OLED显示已由 snapshot 统一托管
+    // 波形显示由 snapshot 统一托管
 }
 
 void AppScannerDiag::begin() {
     lastIOStatus = "";
     isFirstRun = true;
-    // 不再重置 currentSubMode，以保留从菜单传进来的设置
     Serial.printf("[DIAGNOSTIC] Scanner Diagnostic Started (Mode: %d)\n", currentSubMode);
     
-    // 初始化时执行一次对应的显示逻辑
     switch (currentSubMode) {
         case 0: handleIOStatusCheck(); break;
         case 1: handleEncoderValues(); break;
@@ -354,12 +242,9 @@ void AppScannerDiag::begin() {
 }
 
 void AppScannerDiag::update(uint32_t currentTime, bool btnPressed) {
-    if (btnPressed) {
-        handleReturnToMenu();
-        return;
-    }
+    (void)currentTime;
+    (void)btnPressed;
     
-    // 根据子模式调用相应的处理函数
     switch (currentSubMode) {
         case 0:
             handleIOStatusCheck();
@@ -371,22 +256,16 @@ void AppScannerDiag::update(uint32_t currentTime, bool btnPressed) {
             handleWaveformDisplay();
             break;
         case 3:
-            // 退出提示界面
-            // OLED显示已由 snapshot 统一托管
             break;
     }
 }
 
 void AppScannerDiag::switchToNextSubMode() {
-    // 切换子模式（0 -> 1 -> 2 -> 3 -> 0）
     currentSubMode = (currentSubMode + 1) % 4;
-    
-    // 如果切换到IO状态检查子模式，将上升沿计数器清零
     if (currentSubMode == 0) {
         for (int i = 0; i < 4; i++) {
             risingEdgeCounts[i] = 0;
         }
-        // 重置IO状态，确保下次进入时会重新显示
         lastIOStatus = "";
     }
 }
@@ -412,37 +291,25 @@ void AppScannerDiag::captureSnapshot(DisplaySnapshot& snapshot) {
     snapshot.currentMode = APP_DIAG_SCANNER;
     strcpy(snapshot.activePage, "diag_laser");
     
-    // 1. 实时遮挡电平状态
-    // 从测宽仪驱动单例中获取过滤后的实时IO状态电平数组
     bool* ioStates = scanner->getIOStatusArray();
     uint8_t states = 0;
     for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
         if (ioStates[i]) {
-            // 将每一个通道的 active 高电平状态按 bit 位顺序 pack 进单字节 states 中 (Bit 0-3)
             states |= (1 << i);
         }
     }
     snapshot.data.scanner.states = states;
     snapshot.data.scanner.sampleCount = scanner->getSampleCount();
     
-    // 2. 拷贝历史采样波形点阵 (采用 Bit-packing 压缩机制大幅节省跨核/跨设备传输数据量)
-    // - 每一个通道的历史采样是一个最大 200 个 bool (bit) 的缓冲区。
-    // - 我们通过 8个位 (1 字节) 打包为一个 uint8_t 的形式将其存储在 SCAN_BUFFER_BYTES (25 字节) 数组中。
-    // - 这样做可以让 200 bits 历史波形只占用 25 字节，减少 87.5% 的跨总线传输开销。
     for (int i = 0; i < TOTAL_SCAN_CHANNELS; i++) {
         for (int j = 0; j < SCAN_BUFFER_BYTES; j++) {
             uint8_t byteVal = 0;
-            // 逐位 (8 bits) 提取和打包
             for (int bit = 0; bit < 8; bit++) {
-                // 计算当前 bit 对应的全局波形采样位置索引
                 int sampleIdx = j * 8 + bit;
-                // 边界防护：检查索引是否在有效采样点数内，且该采样点上是否有信号遮挡
                 if (sampleIdx < snapshot.data.scanner.sampleCount && scanner->getSample(i, sampleIdx)) {
-                    // 采用高位优先 (MSB First) 进行位打包
                     byteVal |= (1 << (7 - bit));
                 }
             }
-            // 将打包好的单字节存入快照结构体
             snapshot.data.scanner.history[i][j] = byteVal;
         }
     }

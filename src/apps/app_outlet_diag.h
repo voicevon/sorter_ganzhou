@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../config.h"
 #include "../modular/outlet.h"
 #include "../main.h"
 #include "../user_interface/user_interface.h"

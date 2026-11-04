@@ -3,8 +3,6 @@
 #include "../main.h"
 #include "../user_interface/common/display_types.h"
 
-extern void handleReturnToMenu();
-
 AppAbout::AppAbout() {}
 
 void AppAbout::begin() {
@@ -12,9 +10,8 @@ void AppAbout::begin() {
 }
 
 void AppAbout::update(uint32_t currentTime, bool btnPressed) {
-    if (btnPressed) {
-        handleReturnToMenu();
-    }
+    (void)currentTime;
+    (void)btnPressed;
 }
 
 void AppAbout::end() {

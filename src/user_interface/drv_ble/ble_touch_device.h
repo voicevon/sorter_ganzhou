@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <queue>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 #include "../paradigm/i_touch_device.h"
 #include "ble_manager.h"
 
@@ -15,27 +17,6 @@ enum BlePageId : uint8_t {
     BLE_PAGE_OUTLET_DIAG  = 0x04,
 };
 
-/**
- * @class BleTouchDevice
- * @brief BLE 触摸直控设备（手机/平板/PC 连接）
- *
- * 实现 ITouchDevice，将 BLE 通讯接入触摸范式：
- *   - pushSnapshot()：序列化 DisplaySnapshot → 二进制包 → BleManager::sendNotify()
- *   - tick()：消费 BleManager 接收到的 JSON → 解析 → 放入 RichCommand 队列
- *
- * JSON 指令格式与 Rs485TouchDevice 完全一致（共用 CommandDispatcher Handler）：
- *   {"page": "dashboard"}
- *   {"events": [{"cmd": "set_outlet", "index": 2, "min": 3.5, "max": 6.0, "mask": 3}]}
- *
- * 二进制状态包格式：
- *   [0xA5][page_id][payload_len][checksum=XOR(all)] [payload...]
- *
- * 使用方式（main.cpp）：
- *   BleManager::getInstance().initialize("ESP32-Sorter");
- *   static BleTouchDevice bleTouch;
- *   bleTouch.initialize();
- *   userInterface->addTouchDevice(&bleTouch);
- */
 class BleTouchDevice : public ITouchDevice {
 public:
     BleTouchDevice() : _ble(BleManager::getInstance()) {}
@@ -48,12 +29,13 @@ public:
     void tick() override;
     void pushSnapshot(const DisplaySnapshot& snapshot) override;
 
-    bool hasCommand() override { return !_cmdQueue.empty(); }
+    bool hasCommand() override;
     RichCommand pollCommand() override;
 
 private:
     BleManager& _ble;
     std::queue<RichCommand> _cmdQueue;
+    mutable portMUX_TYPE _queueMux = portMUX_INITIALIZER_UNLOCKED;
 
     // 上次推送的快照内容（用于脏检测）
     DisplaySnapshot _lastSnapshot;

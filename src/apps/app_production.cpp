@@ -14,16 +14,8 @@ void AppProduction::begin() {
 }
 
 void AppProduction::update(uint32_t currentTime, bool btnPressed) {
-    if (btnPressed) {
-        handleReturnToMenu();
-        return;
-    }
-
-    int delta = UserInterface::getInstance()->getRawEncoderDelta();
-    if (delta != 0) {
-        normalModeSubmode = (normalModeSubmode + 1) % 2;
-        Serial.printf("[AppProduction] Knob rotated, normal submode: %d\n", normalModeSubmode);
-    }
+    (void)currentTime;
+    (void)btnPressed;
 }
 
 void AppProduction::end() {

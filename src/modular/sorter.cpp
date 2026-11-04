@@ -203,8 +203,11 @@ void Sorter::run() {
 // 出口控制公共方法实现
 void Sorter::setOutletState(uint8_t outletIndex, bool open) {
     if (outletIndex >= NUM_OUTLETS) return;
-    outlets[outletIndex].setReadyToOpen(open);
-    outlets[outletIndex].execute();
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        outlets[outletIndex].setReadyToOpen(open);
+        outlets[outletIndex].execute();
+        xSemaphoreGive(mutex);
+    }
 }
 
 // 获取特定出口对象的指针（用于诊断模式同步，返回地址）
@@ -217,7 +220,6 @@ Outlet* Sorter::getOutlet(uint8_t index) {
 // 实现预设出口功能
 void Sorter::prepareOutlets() {
     uint8_t capacity = TraySystem::getCapacity();
-    int asparagusLength = scanner->getLengthLevel();
 
     // 定义统一的匹配判定逻辑 (Lambda)
     auto isMatch = [&](int p, int outletIdx) -> bool {
@@ -284,8 +286,6 @@ float Sorter::getConveyorSpeedPerSecond() {
     return lastSpeed.load(); // 原子读取，无需互斥锁保护
 }
 
-// 获取显示数据（用于 UserInterface）
-// Sorter::getDisplayData方法已移除，改用专用方法
 // 获取出口最小直径
 int Sorter::getOutletMinDiameter(uint8_t outletIndex) {
     int val = 0;
@@ -310,6 +310,18 @@ int Sorter::getOutletMaxDiameter(uint8_t outletIndex) {
     return val;
 }
 
+// 获取出口长度掩码
+uint8_t Sorter::getOutletTargetLength(uint8_t outletIndex) {
+    uint8_t val = 0;
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        if (outletIndex < NUM_OUTLETS) {
+            val = outlets[outletIndex].getTargetLength();
+        }
+        xSemaphoreGive(mutex);
+    }
+    return val;
+}
+
 // 设置出口最小直径
 void Sorter::setOutletMinDiameter(uint8_t outletIndex, int minDiameter) {
     if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -325,6 +337,16 @@ void Sorter::setOutletMaxDiameter(uint8_t outletIndex, int maxDiameter) {
     if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         if (outletIndex < NUM_OUTLETS) {
             outlets[outletIndex].setMatchDiameterMax(maxDiameter);
+        }
+        xSemaphoreGive(mutex);
+    }
+}
+
+// 设置出口长度掩码
+void Sorter::setOutletTargetLength(uint8_t outletIndex, uint8_t targetLength) {
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (outletIndex < NUM_OUTLETS) {
+            outlets[outletIndex].setTargetLength(targetLength);
         }
         xSemaphoreGive(mutex);
     }
@@ -373,20 +395,24 @@ void Sorter::updateShiftRegisters() {
     // 物理刷新 (由 Driver 负责脏检查)
     shiftDriver.write(chip2Byte, chip1Byte, ledByte);
 }
+
 void Sorter::saveConfig() {
     Serial.println("[Sorter] 开始保存配置到 EEPROM...");
-    EEPROM.write(EEPROM_ADDR_DIAMETER, 0xAA);
-    for (uint8_t i = 0; i < NUM_OUTLETS; i++) {
-        int minD = outlets[i].getMatchDiameterMin();
-        int maxD = outlets[i].getMatchDiameterMax();
-        uint8_t maskL = outlets[i].getTargetLength();
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3,     minD);
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 1, maxD);
-        EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 2, maskL);
-        Serial.printf("[Sorter] 写入出口 #%d -> Min=%d, Max=%d, Mask=%d\n", i + 1, minD, maxD, maskL);
+    if (xSemaphoreTake(mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        EEPROM.write(EEPROM_ADDR_DIAMETER, 0xAA);
+        for (uint8_t i = 0; i < NUM_OUTLETS; i++) {
+            int minD = outlets[i].getMatchDiameterMin();
+            int maxD = outlets[i].getMatchDiameterMax();
+            uint8_t maskL = outlets[i].getTargetLength();
+            EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3,     minD);
+            EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 1, maxD);
+            EEPROM.write(EEPROM_ADDR_DIAMETER_DATA + i * 3 + 2, maskL);
+            Serial.printf("[Sorter] 写入出口 #%d -> Min=%d, Max=%d, Mask=%d\n", i + 1, minD, maxD, maskL);
+        }
+        EEPROM.write(EEPROM_ADDR_OUTLET0_MODE, outlet0Mode);
+        Serial.printf("[Sorter] 写入出口 0 模式 -> %d\n", outlet0Mode);
+        xSemaphoreGive(mutex);
     }
-    EEPROM.write(EEPROM_ADDR_OUTLET0_MODE, outlet0Mode);
-    Serial.printf("[Sorter] 写入出口 0 模式 -> %d\n", outlet0Mode);
     EEPROM.commit();
     Serial.println("[Sorter] 配置已成功提交并保存到 EEPROM。");
 }

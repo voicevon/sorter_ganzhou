@@ -45,14 +45,13 @@ public:
     }
 
     void onPassKeyNotify(uint32_t pass_key) override {
-        // ESP32 输出 PIN，对端需在其设备上输入
-        Serial.printf("[BleManager] *** PAIRING PIN: %06d ***\n", pass_key);
-        _mgr->_onPinRequested(); // 触发用户侧显示（如 OLED）
+        // ESP32 输出协议栈生成的 PIN，对端需在其设备上输入
+        Serial.printf("[BleManager] *** PAIRING PIN: %06u ***\n", pass_key);
     }
 
     bool onConfirmPIN(uint32_t pass_key) override {
-        // Numeric Comparison：自动确认（若需要手动确认可改为 false 并等待用户输入）
-        Serial.printf("[BleManager] Confirm PIN: %06d -> Auto-accepted\n", pass_key);
+        // Numeric Comparison：自动确认
+        Serial.printf("[BleManager] Confirm PIN: %06u -> Auto-accepted\n", pass_key);
         return true;
     }
 
@@ -154,8 +153,7 @@ void BleManager::_onConnect() {
 void BleManager::_onDisconnect() {
     _connected = false;
     Serial.println("[BleManager] Client disconnected, restarting advertising...");
-    // 断连后自动重新广播
-    delay(200);
+    // 断连后自动重新广播（不在 BTC 回调中调用阻塞式 delay）
     BLEDevice::startAdvertising();
 }
 
@@ -166,9 +164,8 @@ void BleManager::_onCommandReceived(const String& json) {
 }
 
 uint32_t BleManager::_onPinRequested() {
-    // 生成固定 PIN（可改为随机）
     static uint32_t pin = 123456;
-    Serial.printf("[BleManager] Passkey: %06d\n", pin);
+    Serial.printf("[BleManager] Passkey: %06u\n", pin);
     if (_pinCallback) {
         _pinCallback(pin);
     }

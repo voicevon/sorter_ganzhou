@@ -5,7 +5,6 @@
 #include "apps/app_outlet_diag.h"
 #include "apps/app_encoder_diag.h"
 #include "apps/app_config.h"
-#include "apps/app_hmi_diag.h"
 #include "apps/app_base.h"
 #include "apps/app_production.h"
 #include "apps/app_about.h"
@@ -14,12 +13,16 @@
 // 前向声明
 String getAppTypeName(AppType appType);
 
-// 外部引用（由 main.cpp 或其他模块定义）
+// 外部引用（由 main.cpp 定义）
 extern class AppProduction appProduction;
 extern Sorter sorter;
 extern class AppConfigDiameter appConfigDiameter;
 extern class AppConfigPhaseOffset appConfigPhaseOffset;
 extern AppAbout appAbout;
+extern class AppScannerDiag appScannerDiag;
+extern class AppOutletDiag appOutletDiag;
+extern class AppEncoderDiag appEncoderDiag;
+extern bool hasVersionInfoDisplayed;
 
 // 全局变量定义
 AppType currentAppType = APP_PRODUCTION;
@@ -28,11 +31,6 @@ bool appTypeChangePending = false;
 unsigned long systemBootCount = 0;
 String firmwareVersion = "ver: 2601";
 AppBase* activeApp = &appProduction;
-extern class AppScannerDiag appScannerDiag;
-extern class AppOutletDiag appOutletDiag;
-extern class AppEncoderDiag appEncoderDiag;
-extern class AppHmiDiag appHmiDiag;
-extern bool hasVersionInfoDisplayed;
 
 void switchToAppType(AppType appType) {
     pendingAppType = appType;
@@ -71,9 +69,6 @@ void handleAppTypeChange() {
         case APP_DIAG_OUTLET:
             activeApp = &appOutletDiag;
             break;
-        case APP_DIAG_HMI:
-            activeApp = &appHmiDiag;
-            break;
         case APP_CONFIG_DIAMETER:
             activeApp = &appConfigDiameter;
             break;
@@ -84,7 +79,7 @@ void handleAppTypeChange() {
             activeApp = &appAbout;
             break;
         default:
-            activeApp = nullptr;
+            activeApp = &appProduction;
             break;
     }
 
@@ -111,7 +106,7 @@ String getAppTypeName(AppType appType) {
         case APP_DIAG_OUTLET: return "Outlet Diag";
         case APP_VERSION_INFO: return "Version Info";
         case APP_CONFIG_DIAMETER: return "Config Diameter";
-        case APP_DIAG_HMI: return "HMI Encoder Diag";
+        case APP_DIAG_HMI: return "HMI Diag";
         case APP_CONFIG_PHASE_OFFSET: return "Config Phase Offset";
         default: return "Unknown Mode";
     }

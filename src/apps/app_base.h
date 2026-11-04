@@ -3,9 +3,6 @@
 
 #include <Arduino.h>
 
-// 全局模式返回辅助
-extern void handleReturnToMenu();
-
 struct DisplaySnapshot;
 
 /**
