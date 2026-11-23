@@ -17,7 +17,7 @@ Encoder::Encoder() {
     zeroCrossRawCount = 0;
     forcedZeroCount = 0;
     forcedZeroRawCount = 0;
-    phaseOffset = 0;  // 默认无偏移，装机标定后可修改
+    phaseOffset.store(0);  // 默认无偏移，装机标定后可修改
     
     // 初始化回调函数指针为nullptr
     encoderPhaseCallback = nullptr;

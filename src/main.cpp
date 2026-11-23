@@ -292,12 +292,21 @@ void setupCommandDispatcher() {
 
     // ── 编码器相位偏移（来自 RS485 / BLE 的 set_offset）
     d.registerHandler("set_offset", [](const RichCommand& cmd) {
-        uint8_t newOffset = (uint8_t)(cmd.paramI & 0xFF);
+        int rawOffset = cmd.paramI;
+        int newOffset = rawOffset % ENCODER_MAX_PHASE;
+        if (newOffset < 0) newOffset += ENCODER_MAX_PHASE;
+
         encoder->setPhaseOffset(newOffset);
         EEPROM.write(EEPROM_ADDR_PHASE_OFFSET, 0xA5);
-        EEPROM.write(EEPROM_ADDR_PHASE_OFFSET + 1, newOffset);
+        EEPROM.write(EEPROM_ADDR_PHASE_OFFSET + 1, (uint8_t)newOffset);
         EEPROM.commit();
         Serial.printf("[Dispatcher] set_offset: %d (saved to EEPROM)\n", newOffset);
+
+        // 立即触发一次快照广播推送，确保从机在下一次应答时立即看到更新后的 offset
+        DisplaySnapshot snap = {};
+        snap.currentMode = currentAppType;
+        if (activeApp) activeApp->captureSnapshot(snap);
+        userInterface->broadcastSnapshot(snap);
     });
 
     // ── 清零（Tare，来自 RS485 / BLE）

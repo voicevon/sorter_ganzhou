@@ -24,7 +24,7 @@ private:
     std::atomic<long> zeroCrossRawCount;     // Z相触发时的原始计数值 (ISR 写, Task 读)
     std::atomic<int> forcedZeroCount;        // 强制清零次数 (ISR 写, Task 读)
     std::atomic<long> forcedZeroRawCount;    // 强制清零时的原始计数值 (ISR 写, Task 读)
-    int phaseOffset;                         // 零位偏移量：补偿各机器编码器安装位置差异
+    std::atomic<int> phaseOffset;            // 零位偏移量：补偿各机器编码器安装位置差异 (跨核+ISR可见)
     
     // 引脚状态缓存（参考 SimpleFOC 优化）
     volatile int pinA_state;        // A相上一个状态
@@ -53,10 +53,14 @@ public:
     int getCurrentPosition();
 
     // 设置零位偏移量（装机标定时调用一次，范围 0~199）
-    void setPhaseOffset(int offset) { phaseOffset = offset % ENCODER_MAX_PHASE; }
+    void setPhaseOffset(int offset) {
+        int val = offset % ENCODER_MAX_PHASE;
+        if (val < 0) val += ENCODER_MAX_PHASE;
+        phaseOffset.store(val);
+    }
 
     // 获取当前零位偏移量
-    int getPhaseOffset() const { return phaseOffset; }
+    int getPhaseOffset() const { return phaseOffset.load(); }
 
     // 获取原始计数值
     long getRawCount() const { return rawEncoderCount; }

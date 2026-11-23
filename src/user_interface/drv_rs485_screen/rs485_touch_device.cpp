@@ -1,6 +1,7 @@
 #include "rs485_touch_device.h"
 #include "../../config.h"
 #include "../../main.h"
+#include "../../modular/encoder.h"
 
 // ── 单例 ─────────────────────────────────────────────────────────────────────
 
@@ -78,24 +79,23 @@ void Rs485TouchDevice::pushSnapshot(const DisplaySnapshot& snapshot) {
         serializeJson(doc, jsonStr);
         hasData = true;
     }
-    else if (_slavePage == "diag_encoder" &&
-             (snapshot.currentMode == APP_DIAG_ENCODER ||
-              snapshot.currentMode == APP_DIAG_HMI ||
-              snapshot.currentMode == APP_CONFIG_PHASE_OFFSET)) {
+    else if (_slavePage == "diag_encoder") {
         StaticJsonDocument<512> doc;
         doc["page"] = "diag_encoder";
         JsonObject data = doc.createNestedObject("data");
-        data["raw_val"]       = snapshot.data.encoder.raw;
-        data["corrected_val"] = snapshot.data.encoder.corrected;
-        data["logic_val"]     = snapshot.data.encoder.logic;
-        data["offset"]        = snapshot.data.encoder.offset;
-        data["zero_count"]    = snapshot.data.encoder.zeroCount;
-        data["zero_total"]    = snapshot.data.encoder.zeroTotal;
-        data["zero_correct"]  = snapshot.data.encoder.zeroCorrect;
-        data["pulse_count"]   = snapshot.data.encoder.raw;
-        data["velocity"]      = (float)abs(snapshot.data.encoder.raw - _lastRawCount) * 10.0f;
+        Encoder* enc = Encoder::getInstance();
+        data["raw_val"]       = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.raw : enc->getRawCount();
+        data["corrected_val"] = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.corrected : enc->getZeroCrossRawCount();
+        data["logic_val"]     = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.logic : enc->getCurrentPosition();
+        data["offset"]        = enc->getPhaseOffset();
+        data["zero_count"]    = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.zeroCount : (enc->getZeroCrossCount() - enc->getForcedZeroCount());
+        data["zero_total"]    = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.zeroTotal : enc->getForcedZeroCount();
+        data["zero_correct"]  = (snapshot.currentMode == APP_DIAG_ENCODER) ? snapshot.data.encoder.zeroCorrect : enc->getZeroCrossCount();
+        data["pulse_count"]   = data["raw_val"];
+        long currentRaw       = data["raw_val"];
+        data["velocity"]      = (float)abs(currentRaw - _lastRawCount) * 10.0f;
         data["status"]        = 1;
-        _lastRawCount = snapshot.data.encoder.raw;
+        _lastRawCount         = currentRaw;
         serializeJson(doc, jsonStr);
         hasData = true;
     }
@@ -143,7 +143,7 @@ void Rs485TouchDevice::pushSnapshot(const DisplaySnapshot& snapshot) {
     }
 
     if (hasData) {
-        while (_txQueue.size() >= 5) _txQueue.pop();
+        while (!_txQueue.empty()) _txQueue.pop(); // 始终只保留最新 1 帧快照，彻底杜绝陈旧帧积压
         _txQueue.push(jsonStr);
     }
 }
@@ -272,8 +272,14 @@ void Rs485TouchDevice::processLine(const String& line) {
                 needSaveConfig = true;
 
             } else if (evCmd == "set_offset") {
-                // 兼容 "state" 和 "params" 两种字段名
-                cmd.paramI = ev.containsKey("state") ? (int)ev["state"] : (int)ev["params"];
+                // 兼容 "state", "params", "offset", "value", "val" 多种字段名
+                if (ev.containsKey("state"))       cmd.paramI = (int)ev["state"];
+                else if (ev.containsKey("params")) cmd.paramI = (int)ev["params"];
+                else if (ev.containsKey("offset")) cmd.paramI = (int)ev["offset"];
+                else if (ev.containsKey("value"))  cmd.paramI = (int)ev["value"];
+                else if (ev.containsKey("val"))    cmd.paramI = (int)ev["val"];
+                else                               cmd.paramI = 0;
+                cmd.index = ev["index"] | 0;
 
             } else {
                 // 透传未知命令，让 CommandDispatcher 决定处理
@@ -281,8 +287,8 @@ void Rs485TouchDevice::processLine(const String& line) {
             }
 
             _cmdQueue.push(cmd);
-            Serial.printf("[Rs485TouchDevice] Event -> cmd='%s', index=%d\n",
-                          cmd.cmd.c_str(), cmd.index);
+            Serial.printf("[Rs485TouchDevice] Event -> cmd='%s', index=%d, paramI=%d\n",
+                          cmd.cmd.c_str(), cmd.index, cmd.paramI);
         }
 
         // 批量 set_outlet 完成后统一触发一次持久化保存
